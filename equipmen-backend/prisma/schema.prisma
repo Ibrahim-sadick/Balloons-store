@@ -1,0 +1,188 @@
+// Balons Store — equipment & asset register schema.
+// MySQL 8.0, utf8mb4_unicode_ci (case-insensitive uniqueness, matching the
+// storekeeper's expectation that "BLN-1" and "bln-1" are the same tag).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  STOREKEEPER
+  VIEWER
+}
+
+enum Condition {
+  New
+  Excellent
+  Good
+  Fair
+  Poor
+  Damaged
+}
+
+enum MaintenanceType {
+  Inspection
+  Calibration
+  Repair
+  Service
+  GasRefill
+}
+
+enum MaintenanceStatus {
+  scheduled
+  in_progress
+  completed
+}
+
+model User {
+  id           String          @id @default(cuid())
+  name         String
+  email        String          @unique
+  passwordHash String          @map("password_hash")
+  role         Role            @default(STOREKEEPER)
+  createdAt    DateTime        @default(now()) @map("created_at")
+  activity     ActivityEvent[]
+
+  @@map("users")
+}
+
+model Category {
+  id        String      @id @default(cuid())
+  name      String      @unique
+  code      String      @unique
+  equipment Equipment[]
+
+  @@map("categories")
+}
+
+model Location {
+  id        String      @id @default(cuid())
+  name      String      @unique
+  code      String      @unique
+  zone      String?
+  equipment Equipment[]
+
+  @@map("locations")
+}
+
+// One row per physical asset line. `quantity` is the number of units owned.
+// Availability, issued quantity and status are derived, never stored.
+model Equipment {
+  id           String    @id @default(cuid())
+  assetTag     String    @unique @map("asset_tag")
+  name         String
+  serialNumber String?   @unique @map("serial_number")
+  manufacturer String?
+  model        String?
+  condition    Condition @default(Good)
+  acquiredOn   DateTime  @db.Date @map("acquired_on")
+  notes        String    @db.Text
+  quantity     Int       @default(1)
+  categoryId   String    @map("category_id")
+  locationId   String    @map("location_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  category    Category         @relation(fields: [categoryId], references: [id])
+  location    Location         @relation(fields: [locationId], references: [id])
+  checkouts   Checkout[]
+  maintenance MaintenanceLog[]
+
+  @@index([name])
+  @@index([categoryId])
+  @@index([locationId])
+  @@map("equipment")
+}
+
+// An OUT movement. Never mutated except for a condition note; returns live in
+// CheckReturn so a 10-unit checkout that comes back 6 + 4 keeps its history.
+model Checkout {
+  id             String       @id @default(cuid())
+  ref            String       @unique
+  equipmentId    String       @map("equipment_id")
+  quantity       Int
+  issuedTo       String       @map("issued_to")
+  issuedBy       String       @map("issued_by")
+  issuedOn       DateTime     @db.Date @map("issued_on")
+  expectedReturn DateTime     @db.Date @map("expected_return")
+  conditionOut   Condition    @map("condition_out")
+  notes          String       @db.Text
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  equipment Equipment     @relation(fields: [equipmentId], references: [id])
+  returns   CheckReturn[]
+
+  @@index([equipmentId, issuedOn])
+  @@index([issuedOn])
+  @@map("checkouts")
+}
+
+// An IN movement. Partial returns are simply extra rows.
+model CheckReturn {
+  id          String    @id @default(cuid())
+  ref         String    @unique
+  checkoutId  String    @map("checkout_id")
+  quantity    Int
+  returnedOn  DateTime  @db.Date @map("returned_on")
+  returnedBy  String    @map("returned_by")
+  conditionIn Condition @map("condition_in")
+  damageNoted Boolean   @default(false) @map("damage_noted")
+  notes       String    @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  checkout Checkout @relation(fields: [checkoutId], references: [id])
+
+  @@index([checkoutId])
+  @@index([returnedOn])
+  @@map("check_returns")
+}
+
+// Units withdrawn from circulation. `in_progress` units are unavailable.
+model MaintenanceLog {
+  id          String            @id @default(cuid())
+  ref         String            @unique
+  equipmentId String            @map("equipment_id")
+  type        MaintenanceType
+  status      MaintenanceStatus
+  quantity    Int               @default(1)
+  technician  String
+  openedOn    DateTime          @db.Date @map("opened_on")
+  completedOn DateTime?         @db.Date @map("completed_on")
+  notes       String            @db.Text
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  equipment Equipment @relation(fields: [equipmentId], references: [id])
+
+  @@index([equipmentId, status])
+  @@index([openedOn])
+  @@map("maintenance_logs")
+}
+
+// Append-only audit trail shown on the dashboard.
+model ActivityEvent {
+  id          String   @id @default(cuid())
+  at          DateTime @default(now())
+  actorId     String?  @map("actor_id")
+  actorName   String   @map("actor_name")
+  summary     String   @db.Text
+  equipmentId String?  @map("equipment_id")
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([at])
+  @@map("activity_events")
+}
+
+// BLN- / TX- / IN- / MN- reference sequences. Read and bumped under a row lock.
+model Counter {
+  name  String @id
+  value Int
+
+  @@map("counters")
+}
