@@ -7,6 +7,7 @@ import { SESSION_COOKIE, requireAuth, signToken } from "../auth"
 import { unauthorized } from "../errors"
 import { toUserDto } from "../dto"
 import { env } from "../env"
+import { loginLimiter } from "../rate-limit"
 
 export const authRouter = Router()
 
@@ -14,28 +15,35 @@ export const authRouter = Router()
 // password take the same amount of time.
 const DUMMY_HASH = bcrypt.hashSync("balons-store-dummy-password", 10)
 
+// One message for both failures: telling them apart would confirm which emails
+// have accounts, and would make the timing protection above pointless.
+const INVALID_CREDENTIALS = "Email or password is incorrect."
+
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: env.isProduction,
+  path: "/",
+}
+
 authRouter.post(
   "/login",
+  loginLimiter,
   asyncHandler(async (req, res) => {
     const { email, password } = parseBody(loginSchema, req.body)
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } })
 
     if (!user) {
       await bcrypt.compare(password, DUMMY_HASH)
-      throw unauthorized("No store account matches that email.")
+      throw unauthorized(INVALID_CREDENTIALS)
     }
 
     const matches = await bcrypt.compare(password, user.passwordHash)
-    if (!matches) throw unauthorized("Password does not match this account.")
+    if (!matches) throw unauthorized(INVALID_CREDENTIALS)
 
     const dto = toUserDto(user)
     const token = signToken(dto)
-    res.cookie(SESSION_COOKIE, token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    })
+    res.cookie(SESSION_COOKIE, token, { ...COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 * 1000 })
     res.json({ ok: true, token, user: dto })
   }),
 )
@@ -51,6 +59,6 @@ authRouter.get(
 )
 
 authRouter.post("/logout", (_req, res) => {
-  res.clearCookie(SESSION_COOKIE, { sameSite: "lax", secure: env.corsOrigins.length > 0 })
+  res.clearCookie(SESSION_COOKIE, COOKIE_OPTIONS)
   res.json({ ok: true })
 })

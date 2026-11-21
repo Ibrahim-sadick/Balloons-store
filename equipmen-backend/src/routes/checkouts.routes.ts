@@ -4,7 +4,7 @@ import { asyncHandler, today, toDate } from "../http"
 import { badRequest, notFound } from "../errors"
 import { createCheckoutSchema, createReturnSchema, parseBody } from "../validation"
 import { requireAuth, requireWriter } from "../auth"
-import { lockEquipment, nextSequence, recordActivity, stockFor } from "../stock"
+import { lockEquipment, nextSequence, outstandingOf, recordActivity, stockFor } from "../stock"
 import { toTransactionDtos } from "../dto"
 
 export const checkoutRouter = Router()
@@ -119,7 +119,7 @@ checkoutRouter.post(
       })
 
       const returned = checkout.returns.reduce((sum, entry) => sum + entry.quantity, 0)
-      const outstanding = checkout.quantity - returned
+      const outstanding = outstandingOf(checkout.quantity, returned)
       if (outstanding <= 0) throw badRequest("That check-out is already closed.")
       if (input.quantity > outstanding) {
         throw badRequest(`Only ${outstanding} are out on this check-out.`)
@@ -184,5 +184,66 @@ checkoutRouter.post(
         damageNoted: created.entry.damageNoted,
       },
     })
+  }),
+)
+
+/**
+ * Removes one line of the movement list. A row id is either the check-out
+ * itself (what is still out) or `<checkOutId>:<returnId>` for one check-in, so
+ * the same endpoint serves both and the register keeps the other half intact.
+ * The asset row is locked first: deleting while a colleague issues must not let
+ * either side read a half-changed stock figure.
+ */
+checkoutRouter.delete(
+  "/:id",
+  requireWriter,
+  asyncHandler(async (req, res) => {
+    const actor = req.user!
+    const [checkoutId, returnId] = String(req.params.id).split(":")
+    if (!checkoutId) throw notFound("That movement is no longer on record.")
+
+    const removed = await prisma.$transaction(async (tx) => {
+      const checkout = await tx.checkout.findUnique({
+        where: { id: checkoutId },
+        include: { returns: true },
+      })
+      if (!checkout) throw notFound("That movement is no longer on record.")
+
+      await lockEquipment(tx, checkout.equipmentId)
+      const item = await tx.equipment.findUnique({ where: { id: checkout.equipmentId } })
+      const name = item?.name ?? "equipment"
+
+      if (returnId) {
+        const entry = checkout.returns.find((row) => row.id === returnId)
+        if (!entry) throw notFound("That check-in is no longer on record.")
+
+        await tx.checkReturn.delete({ where: { id: entry.id } })
+        await recordActivity(tx, {
+          actorId: actor.id,
+          actorName: actor.name,
+          summary: `Deleted a check-in of ${entry.quantity} ${name} from ${checkout.issuedTo}.`,
+          equipmentId: checkout.equipmentId,
+        })
+        return { kind: "check-in" as const, units: entry.quantity, name, other: checkout.issuedTo }
+      }
+
+      await tx.checkReturn.deleteMany({ where: { checkoutId: checkout.id } })
+      await tx.checkout.delete({ where: { id: checkout.id } })
+      await recordActivity(tx, {
+        actorId: actor.id,
+        actorName: actor.name,
+        summary: `Deleted a check-out of ${checkout.quantity} ${name} to ${checkout.issuedTo}.`,
+        equipmentId: checkout.equipmentId,
+      })
+      return {
+        kind: "check-out" as const,
+        units: checkout.quantity,
+        name,
+        other: checkout.issuedTo,
+        checkins: checkout.returns.length,
+      }
+    })
+
+    res.json({ ok: true, removed })
   }),
 )

@@ -33,6 +33,7 @@ import { equipmentReceiptHtml, printThermalReceipt } from "@/lib/receipt"
 import { countsFor } from "@/lib/stock"
 import { useEquipmentSearch } from "@/components/layout/header"
 import { useStore } from "@/lib/store"
+import { useSyncedState } from "@/hooks/use-synced-state"
 import type { Equipment } from "@/lib/types"
 
 export function EquipmentPage() {
@@ -41,24 +42,22 @@ export function EquipmentPage() {
   const { equipment, categories, locations, transactions, maintenance, session, importEquipment } = useStore()
   const { query: headerQuery } = useEquipmentSearch()
   const canWrite = session?.role !== "VIEWER"
-  const [query, setQuery] = React.useState("")
+  const [query, setQuery] = useSyncedState(searchParams.get("q") ?? "")
   const [categoryId, setCategoryId] = React.useState("all")
   const [nameFilter, setNameFilter] = React.useState("all")
-  const [status, setStatus] = React.useState("all")
+  const [status, setStatus] = useSyncedState(
+    searchParams.get("status") === "available" ||
+      searchParams.get("status") === "checked_out" ||
+      searchParams.get("status") === "maintenance"
+      ? String(searchParams.get("status"))
+      : "all",
+  )
   const [acquiredBy, setAcquiredBy] = React.useState("")
-  const [addOpen, setAddOpen] = React.useState(false)
+  const [addOpen, setAddOpen] = useSyncedState(searchParams.get("add") === "1")
   const [editing, setEditing] = React.useState<Equipment | null>(null)
   const [tagging, setTagging] = React.useState<Equipment | null>(null)
   const [uploadNote, setUploadNote] = React.useState("")
   const fileRef = React.useRef<HTMLInputElement>(null)
-
-  React.useEffect(() => {
-    const next = searchParams.get("status")
-    setStatus(next === "available" || next === "checked_out" || next === "maintenance" ? next : "all")
-    const q = searchParams.get("q")
-    if (q !== null) setQuery(q)
-    if (searchParams.get("add") === "1") setAddOpen(true)
-  }, [searchParams])
 
   const rows = equipment.filter((item) => {
     const category = categories.find((entry) => entry.id === item.categoryId)

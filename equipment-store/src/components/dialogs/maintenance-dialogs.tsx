@@ -8,6 +8,7 @@ import {
   FilterSelect,
   FormError,
   SlateButton,
+  Spinner,
 } from "@/components/controls"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,7 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  STORE_TODAY,
+  storeToday,
   type MaintenanceLog,
   type MaintenanceStatus,
   type MaintenanceType,
@@ -30,6 +31,7 @@ import {
 import { sentenceCase } from "@/lib/format"
 import { countsFor } from "@/lib/stock"
 import { useStore } from "@/lib/store"
+import { useResetWhen } from "@/hooks/use-reset-when"
 
 const types: MaintenanceType[] = ["Inspection", "Calibration", "Repair", "Service", "Gas refill"]
 const statuses: { value: MaintenanceStatus; label: string }[] = [
@@ -48,28 +50,28 @@ export function LogMaintenanceDialog({
   equipmentId?: string | null
 }) {
   const { equipment, transactions, logMaintenance } = useStore()
-  const [selectedId, setSelectedId] = React.useState("")
+  const [selectedId, setSelectedId] = React.useState(equipmentId || equipment[0]?.id || "")
   const [type, setType] = React.useState<MaintenanceType>("Inspection")
   const [status, setStatus] = React.useState<MaintenanceStatus>("scheduled")
   const [quantity, setQuantity] = React.useState("1")
   const [technician, setTechnician] = React.useState("")
-  const [openedOn, setOpenedOn] = React.useState(STORE_TODAY)
+  const [openedOn, setOpenedOn] = React.useState(storeToday())
   const [notes, setNotes] = React.useState("")
   const [error, setError] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
 
-  React.useEffect(() => {
-    if (!open) return
+  // Fresh form each time the dialog opens, or when it is opened for another asset.
+  useResetWhen(`${open}:${equipmentId ?? ""}`, () => {
     setSelectedId(equipmentId || equipment[0]?.id || "")
     setType("Inspection")
     setStatus("scheduled")
     setQuantity("1")
     setTechnician("")
-    setOpenedOn(STORE_TODAY)
+    setOpenedOn(storeToday())
     setNotes("")
     setError("")
-    // Equipment list is read when the dialog opens. Later store updates should not wipe the form.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, equipmentId])
+    setSaving(false)
+  })
 
   const selected = equipment.find((item) => item.id === selectedId)
   const available = selected ? countsFor(selected, transactions).available : 0
@@ -83,20 +85,33 @@ export function LogMaintenanceDialog({
           className="flex flex-col gap-3"
           onSubmit={async (event) => {
             event.preventDefault()
-            const result = await logMaintenance({
-              equipmentId: selectedId,
-              type,
-              status,
-              technician,
-              openedOn,
-              notes,
-              quantity: going,
-            })
-            if (!result.ok) {
-              setError(result.message)
+            // Two clicks must not file two logs, so the button locks until the answer lands.
+            if (saving) return
+            // A log records work that has already started, so its day cannot sit
+            // in the future; the date field carries the same ceiling.
+            if (openedOn > storeToday()) {
+              setError("The opened date cannot be later than today.")
               return
             }
-            onOpenChange(false)
+            setSaving(true)
+            try {
+              const result = await logMaintenance({
+                equipmentId: selectedId,
+                type,
+                status,
+                technician,
+                openedOn,
+                notes,
+                quantity: going,
+              })
+              if (!result.ok) {
+                setError(result.message)
+                return
+              }
+              onOpenChange(false)
+            } finally {
+              setSaving(false)
+            }
           }}
         >
           <DialogHeader>
@@ -159,7 +174,7 @@ export function LogMaintenanceDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="mx-opened">Opened</Label>
-              <Input id="mx-opened" type="date" value={openedOn} onChange={(event) => setOpenedOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
+              <Input id="mx-opened" type="date" max={storeToday()} value={openedOn} onChange={(event) => setOpenedOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <Label htmlFor="mx-notes">Work notes</Label>
@@ -168,12 +183,16 @@ export function LogMaintenanceDialog({
           </div>
           <FormError message={error} />
           <DialogFooter>
-            <Button type="button" variant="outline" className="rounded-md" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" className="rounded-md" disabled={saving} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <EmeraldButton type="submit" disabled={!selectedId}>
-              <Plus className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              Save log
+            <EmeraldButton type="submit" disabled={!selectedId || saving} aria-busy={saving}>
+              {saving ? (
+                <Spinner className="h-4 w-4" />
+              ) : (
+                <Plus className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              )}
+              {saving ? "Saving..." : "Save log"}
             </EmeraldButton>
           </DialogFooter>
         </form>
@@ -193,16 +212,17 @@ export function CompleteMaintenanceDialog({
 }) {
   const { equipment, completeMaintenance } = useStore()
   const item = equipment.find((entry) => entry.id === log?.equipmentId)
-  const [completedOn, setCompletedOn] = React.useState(STORE_TODAY)
+  const [completedOn, setCompletedOn] = React.useState(storeToday())
   const [notes, setNotes] = React.useState("")
   const [error, setError] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
 
-  React.useEffect(() => {
-    if (!open) return
-    setCompletedOn(STORE_TODAY)
+  useResetWhen(`${open}:${log?.id ?? ""}`, () => {
+    setCompletedOn(storeToday())
     setNotes("")
     setError("")
-  }, [open, log])
+    setSaving(false)
+  })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -211,24 +231,34 @@ export function CompleteMaintenanceDialog({
           className="flex flex-col gap-3"
           onSubmit={async (event) => {
             event.preventDefault()
-            if (!log) return
-            const result = await completeMaintenance(log.id, { completedOn, notes })
-            if (!result.ok) {
-              setError(result.message)
+            if (!log || saving) return
+            // Work cannot be closed on a day the store has not reached yet.
+            if (completedOn > storeToday()) {
+              setError("The completed date cannot be later than today.")
               return
             }
-            onOpenChange(false)
+            setSaving(true)
+            try {
+              const result = await completeMaintenance(log.id, { completedOn, notes })
+              if (!result.ok) {
+                setError(result.message)
+                return
+              }
+              onOpenChange(false)
+            } finally {
+              setSaving(false)
+            }
           }}
         >
           <DialogHeader>
             <DialogTitle>Mark completed</DialogTitle>
             <DialogDescription>
-              Close {log?.id} on {item?.assetTag}. If no other repair is open, the asset returns to the hook.
+              Close this work on {item?.assetTag}. If no other repair is open, the asset returns to the hook.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="mx-closed">Completed</Label>
-            <Input id="mx-closed" type="date" value={completedOn} onChange={(event) => setCompletedOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
+            <Input id="mx-closed" type="date" max={storeToday()} value={completedOn} onChange={(event) => setCompletedOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="mx-close-notes">Closing note</Label>
@@ -236,12 +266,16 @@ export function CompleteMaintenanceDialog({
           </div>
           <FormError message={error} />
           <DialogFooter>
-            <Button type="button" variant="outline" className="rounded-md" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" className="rounded-md" disabled={saving} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <SlateButton type="submit">
-              <Check className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              Mark completed
+            <SlateButton type="submit" disabled={!log || saving} aria-busy={saving}>
+              {saving ? (
+                <Spinner className="h-4 w-4" />
+              ) : (
+                <Check className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              )}
+              {saving ? "Saving..." : "Mark completed"}
             </SlateButton>
           </DialogFooter>
         </form>

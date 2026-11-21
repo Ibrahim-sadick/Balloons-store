@@ -6,6 +6,16 @@ export function sentenceCase(value: string): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1)
 }
 
+/**
+ * Tidies user text without destroying acronyms: "dji" -> "Dji" but "DJI" is
+ * left alone, because lower-casing it would misrepresent the manufacturer.
+ */
+export function tidyLabel(value: string): string {
+  const cleaned = value.trim().replace(/\s+/g, " ")
+  if (!cleaned) return ""
+  return cleaned === cleaned.toLowerCase() ? sentenceCase(cleaned) : cleaned
+}
+
 /** Deterministic short code: "Balloon envelope" -> "BAE", "Basket" -> "BAS". */
 export function codeFromName(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean)

@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client"
+import type {Prisma} from "@prisma/client"
 import { badRequest, notFound } from "./errors"
 
 /** Inside `$transaction` use the callback client; outside use `prisma`. */
@@ -25,6 +25,11 @@ export function statusFor(stock: StockSummary): "available" | "checked_out" | "m
   if (stock.issued > 0) return "checked_out"
   if (stock.maintenance > 0) return "maintenance"
   return "available"
+}
+
+/** Units still out on one check-out: issued minus everything already returned. */
+export function outstandingOf(quantity: number, returned: number): number {
+  return Math.max(0, quantity - returned)
 }
 
 /**

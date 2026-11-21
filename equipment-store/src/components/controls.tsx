@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, X } from "lucide-react"
+import { Loader2, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
+import { useStoreToday } from "@/hooks/use-store-today"
 
 export function PageIntro({
   title,
@@ -111,17 +112,30 @@ export function DateField({
   value,
   onChange,
   icon,
+  max,
 }: {
   value: string
   onChange: (value: string) => void
   icon?: React.ReactNode
+  /**
+   * The latest day that can be picked. Defaults to whichever day is today right
+   * now, because every field using this control names a day that has already
+   * happened — a filter bound, a date acquired, a date returned. Days after
+   * today stay shut, and the day that turns into today opens on its own.
+   */
+  max?: string
 }) {
+  // Live, so a screen left open overnight does not keep yesterday's ceiling.
+  const today = useStoreToday()
+  const ceiling = max ?? today
+
   return (
     <div className="flex h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-2 shadow-2xs">
       {icon}
       <input
         type="date"
         value={value}
+        max={ceiling}
         onChange={(event) => onChange(event.target.value)}
         aria-label="Date"
         className="bg-transparent font-mono text-[11px] tabular-nums text-slate-800 outline-none [color-scheme:light]"
@@ -237,6 +251,25 @@ export function SlateButton({
 export function FormError({ message }: { message: string }) {
   if (!message) return null
   return <p className="text-[11px] text-rose-700">{message}</p>
+}
+
+/**
+ * The "this request is in flight" mark. Sits in the icon slot of a button so the
+ * label can change without the button jumping.
+ *
+ * The movement lives in `.spinner-orbit` (globals.css) rather than in Tailwind's
+ * `animate-spin`, because this app clamps every animation to 0.01ms for devices
+ * that ask for reduced motion — which froze this mark into a still image. The
+ * class is exempt there and turns once every 2.4s.
+ */
+export function Spinner({ className }: { className?: string }) {
+  return (
+    <Loader2
+      aria-hidden="true"
+      className={cn("h-4 w-4 spinner-orbit", className)}
+      strokeWidth={1.75}
+    />
+  )
 }
 
 export const fieldInputClass =

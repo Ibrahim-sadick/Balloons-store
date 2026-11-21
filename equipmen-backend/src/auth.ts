@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken"
 import type { NextFunction, Request, Response } from "express"
 import type { Role } from "@prisma/client"
 import { env } from "./env"
+import { prisma } from "./db"
 import { forbidden, unauthorized } from "./errors"
 
 export type SessionUser = {
@@ -36,24 +37,34 @@ function readToken(req: Request): string {
   return typeof cookie === "string" ? cookie : ""
 }
 
-/** Every route below /api except /auth/login and /health requires a storekeeper. */
+/**
+ * Every route below /api except /auth/login and /health requires a storekeeper.
+ * The account is re-read on each request so a deleted user or a changed role
+ * takes effect immediately instead of at token expiry.
+ */
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   const token = readToken(req)
   if (!token) return next(unauthorized("Sign in to continue."))
 
+  let userId: string
   try {
     const payload = jwt.verify(token, env.jwtSecret) as jwt.JwtPayload
     if (!payload.sub) return next(unauthorized("Your session has expired. Sign in again."))
-    req.user = {
-      id: String(payload.sub),
-      name: String(payload.name ?? "Storekeeper"),
-      email: String(payload.email ?? ""),
-      role: payload.role as Role,
-    }
-    return next()
+    userId = String(payload.sub)
   } catch {
     return next(unauthorized("Your session has expired. Sign in again."))
   }
+
+  prisma.user
+    .findUnique({ where: { id: userId } })
+    .then((user) => {
+      if (!user) {
+        return next(unauthorized("Your account is no longer active. Sign in again."))
+      }
+      req.user = { id: user.id, name: user.name, email: user.email, role: user.role }
+      return next()
+    })
+    .catch(next)
 }
 
 /** VIEWER accounts may read everything and change nothing. */

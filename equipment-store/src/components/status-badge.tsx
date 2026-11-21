@@ -140,7 +140,7 @@ export function RoleBadge({ role }: { role: Role }) {
     <BadgeFrame
       className="border-slate-200 bg-slate-50 text-slate-700"
       icon={<Shield className={iconClass} strokeWidth={1.75} />}
-      label={role === "STOREKEEPER" ? "Storekeeper" : role === "ADMIN" ? "Admin" : "Viewer"}
+      label={role === "STOREKEEPER" ? "Storekeeper" : role === "ADMIN" ? "Administrator" : "Viewer"}
     />
   )
 }

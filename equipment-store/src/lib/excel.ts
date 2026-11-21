@@ -1,5 +1,15 @@
 export type ExcelCell = string | number
 
+/** A line under the data: a label alone is a bold section heading. */
+export type ExcelSummary = { label: string; value?: ExcelCell }
+
+export type XlsxOptions = {
+  /** Report heading printed in the first row, in bold. */
+  title?: string
+  /** Totals block appended below the data, after one blank row. */
+  summary?: ExcelSummary[]
+}
+
 const encoder = new TextEncoder()
 
 const crcTable = (() => {
@@ -128,18 +138,46 @@ function sheetTitle(value: string) {
   return cleaned || "Report"
 }
 
-function cellXml(reference: string, value: ExcelCell) {
+function cellXml(reference: string, value: ExcelCell, bold: boolean) {
+  const style = bold ? ' s="1"' : ""
   if (typeof value === "number" && Number.isFinite(value)) {
-    return `<c r="${reference}"><v>${value}</v></c>`
+    return `<c r="${reference}"${style}><v>${value}</v></c>`
   }
-  return `<c r="${reference}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(String(value))}</t></is></c>`
+  return `<c r="${reference}"${style} t="inlineStr"><is><t xml:space="preserve">${escapeXml(String(value))}</t></is></c>`
 }
 
+/**
+ * Arial Narrow at 10 pt for every cell, plus one bold face for the report title
+ * and the column headings. A machine without Arial Narrow falls back to its
+ * default sans-serif, so the numbers still read.
+ */
+const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="10"/><name val="Arial Narrow"/><family val="2"/></font><font><b/><sz val="10"/><name val="Arial Narrow"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`
+
+type SheetRow = { cells: ExcelCell[]; bold?: boolean }
+
 /** Builds a valid single-sheet .xlsx workbook in memory. */
-export function buildXlsx(headers: ExcelCell[], rows: ExcelCell[][], sheetName = "Report") {
-  const sheetRows = [headers, ...rows]
+export function buildXlsx(
+  headers: ExcelCell[],
+  rows: ExcelCell[][],
+  sheetName = "Report",
+  options: XlsxOptions = {},
+) {
+  const sheetRows: SheetRow[] = []
+  if (options.title) sheetRows.push({ cells: [options.title], bold: true })
+  sheetRows.push({ cells: headers, bold: true })
+  for (const row of rows) sheetRows.push({ cells: row })
+  if (options.summary?.length) {
+    sheetRows.push({ cells: [] })
+    for (const line of options.summary) {
+      sheetRows.push(line.value === undefined ? { cells: [line.label], bold: true } : { cells: [line.label, line.value] })
+    }
+  }
+
+  const sheetRowsXml = sheetRows
     .map((row, rowIndex) => {
-      const cells = row.map((value, columnIndex) => cellXml(`${columnName(columnIndex)}${rowIndex + 1}`, value)).join("")
+      const cells = row.cells
+        .map((value, columnIndex) => cellXml(`${columnName(columnIndex)}${rowIndex + 1}`, value, Boolean(row.bold)))
+        .join("")
       return `<row r="${rowIndex + 1}">${cells}</row>`
     })
     .join("")
@@ -147,7 +185,7 @@ export function buildXlsx(headers: ExcelCell[], rows: ExcelCell[][], sheetName =
   const parts = [
     {
       name: "[Content_Types].xml",
-      body: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+      body: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
     },
     {
       name: "_rels/.rels",
@@ -159,19 +197,26 @@ export function buildXlsx(headers: ExcelCell[], rows: ExcelCell[][], sheetName =
     },
     {
       name: "xl/_rels/workbook.xml.rels",
-      body: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      body: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
     },
+    { name: "xl/styles.xml", body: stylesXml },
     {
       name: "xl/worksheets/sheet1.xml",
-      body: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`,
+      body: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRowsXml}</sheetData></worksheet>`,
     },
   ]
 
   return zip(parts.map((part) => ({ name: part.name, data: encoder.encode(part.body) })))
 }
 
-export function downloadXlsx(filename: string, sheetName: string, headers: ExcelCell[], rows: ExcelCell[][]) {
-  const bytes = buildXlsx(headers, rows, sheetName)
+export function downloadXlsx(
+  filename: string,
+  sheetName: string,
+  headers: ExcelCell[],
+  rows: ExcelCell[][],
+  options: XlsxOptions = {},
+) {
+  const bytes = buildXlsx(headers, rows, sheetName, options)
   const blob = new Blob([bytes], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   })

@@ -12,6 +12,7 @@ import { AppHeader, EquipmentSearchProvider } from "@/components/layout/header"
 import { SidebarBody } from "@/components/layout/sidebar"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { useResetWhen } from "@/hooks/use-reset-when"
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { session, ready } = useStore()
@@ -24,9 +25,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (ready && !session) router.replace("/login")
   }, [ready, session, router])
 
-  React.useEffect(() => {
-    setNavOpen(false)
-  }, [pathname])
+  // A route change means the mobile drawer has done its job.
+  useResetWhen(pathname, () => setNavOpen(false))
 
   return (
     <div className="min-h-screen bg-slate-50">

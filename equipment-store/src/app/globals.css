@@ -144,6 +144,115 @@
   }
 }
 
+/*
+ * The in-flight spinner is the one animation deliberately kept alive when a
+ * device asks for reduced motion. The clamp above would otherwise freeze it at
+ * 0.01ms, and a progress mark that never moves reads as "the page has stopped"
+ * — worse than the motion it avoids. One turn takes 2.4s: a slow drift, calmer
+ * than Tailwind's 1s default, which strobes when the icon is only 16px. The
+ * class also outranks the `*` clamp by specificity, so no inline style is needed.
+ */
+@keyframes balons-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner-orbit {
+  animation: balons-spin 2.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner-orbit {
+    animation: balons-spin 2.4s linear infinite !important;
+  }
+}
+
+/*
+ * The sign-out veil and its progress line follow the same rule as the spinner:
+ * they carry their own classes so the reduced-motion clamp cannot freeze them.
+ * The bar fills over 4.5s, the same hold the button waits before handing back
+ * to the login screen, so the two read as one gesture rather than two timers.
+ */
+@keyframes balons-veil-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes balons-veil-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes balons-bar-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* The only moving thing on the sign-out veil: the mark breathes slowly so the
+   wait reads as "working" without a second spinner beside the words. */
+@keyframes balons-mark-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.28;
+  }
+}
+
+.signout-veil {
+  animation: balons-veil-in 360ms ease-out both;
+}
+
+.signout-veil-out {
+  animation: balons-veil-out 260ms ease-in both;
+}
+
+.signout-bar {
+  transform-origin: left center;
+  animation: balons-bar-fill 5s cubic-bezier(0.35, 0, 0.25, 1) both;
+}
+
+.signout-mark {
+  animation: balons-mark-blink 2.4s ease-in-out infinite;
+}
+
+/* The dashboard's "showing an earlier day" wait: the mark and nothing else. */
+.logo-hold-mark {
+  animation: balons-mark-blink 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signout-veil {
+    animation: balons-veil-in 360ms ease-out both !important;
+  }
+  .signout-veil-out {
+    animation: balons-veil-out 260ms ease-in both !important;
+  }
+  .signout-bar {
+    animation: balons-bar-fill 5s cubic-bezier(0.35, 0, 0.25, 1) both !important;
+  }
+  .signout-mark {
+    animation: balons-mark-blink 2.4s ease-in-out infinite !important;
+  }
+  .logo-hold-mark {
+    animation: balons-mark-blink 2.4s ease-in-out infinite !important;
+  }
+}
+
 @media print {
   body * {
     visibility: hidden;

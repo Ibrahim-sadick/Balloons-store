@@ -27,10 +27,11 @@ import {
 import { useStore } from "@/lib/store"
 import type { Role } from "@/lib/types"
 
+// One role exists by design. This store is run by a single administrator and the
+// API issues exactly one account, so offering Storekeeper or Viewer here would
+// advertise a choice that does not exist.
 const roles: { value: Role; label: string }[] = [
-  { value: "ADMIN", label: "ADMIN" },
-  { value: "STOREKEEPER", label: "STOREKEEPER" },
-  { value: "VIEWER", label: "VIEWER" },
+  { value: "ADMIN", label: "Administrator" },
 ]
 
 export function SettingsPage() {
@@ -66,10 +67,10 @@ export function SettingsPage() {
       />
       <Tabs value={tab} onValueChange={setTab}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <TabsList>
-            <TabsTrigger value="users">Users & roles</TabsTrigger>
-            <TabsTrigger value="categories">Categories</TabsTrigger>
-            <TabsTrigger value="locations">Store locations</TabsTrigger>
+          <TabsList className="min-h-10 gap-0.5 rounded-lg p-1">
+            <TabsTrigger value="users" className="px-4 text-[13px]">Users & roles</TabsTrigger>
+            <TabsTrigger value="categories" className="px-4 text-[13px]">Categories</TabsTrigger>
+            <TabsTrigger value="locations" className="px-4 text-[13px]">Store locations</TabsTrigger>
           </TabsList>
         </div>
 

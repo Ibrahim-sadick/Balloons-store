@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { DM_Sans, Geist_Mono } from "next/font/google"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { SignOutVeil } from "@/components/layout/sign-out-overlay"
 import { StoreProvider } from "@/lib/store"
 import "./globals.css"
 
@@ -35,6 +36,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <TooltipProvider delay={300}>
           <StoreProvider>{children}</StoreProvider>
         </TooltipProvider>
+        {/* Outside the route tree on purpose: signing out changes the page, and
+            the veil has to keep the screen past that change. */}
+        <SignOutVeil />
       </body>
     </html>
   )

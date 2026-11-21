@@ -6,6 +6,21 @@ const dateOnly = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-11-20.")
 
+/** Today on this server's clock, in the same YYYY-MM-DD form the store uses. */
+function todayIso() {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, "0")
+  const day = String(now.getDate()).padStart(2, "0")
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
+/**
+ * Days that have already happened. Everything the store records — a date
+ * acquired, a repair opened or closed, a return — lands on or before today;
+ * only an expected return date is allowed to sit in the future.
+ */
+const pastOrToday = (message: string) => dateOnly.refine((value) => value <= todayIso(), message)
+
 const quantity = z
   .number({ invalid_type_error: "Enter how many. Use a whole number such as 5, 10, or 50." })
   .int("Enter a whole number such as 5, 10, or 50.")
@@ -30,7 +45,7 @@ export const createEquipmentSchema = z.object({
   manufacturer: z.string().trim().max(80).optional(),
   model: z.string().trim().max(80).optional(),
   condition: condition.default("Good"),
-  acquiredOn: dateOnly,
+  acquiredOn: pastOrToday("The acquired date cannot be later than today."),
   notes: z.string().trim().max(500).optional(),
   quantity,
 })
@@ -44,7 +59,7 @@ export const updateEquipmentSchema = z
     manufacturer: z.string().trim().max(80).optional(),
     model: z.string().trim().max(80).optional(),
     condition: condition.optional(),
-    acquiredOn: dateOnly.optional(),
+    acquiredOn: pastOrToday("The acquired date cannot be later than today.").optional(),
     notes: z.string().trim().max(500).optional(),
     quantity: quantity.optional(),
   })
@@ -65,7 +80,10 @@ const importRowSchema = z.object({
 })
 
 export const importSchema = z.object({
-  rows: z.array(importRowSchema).min(1, "That CSV has no equipment rows.").max(500, "Import at most 500 rows at a time."),
+  rows: z
+    .array(importRowSchema)
+    .min(1, "That CSV has no equipment rows.")
+    .max(500, "Import at most 500 rows at a time."),
 })
 
 export const createCheckoutSchema = z.object({
@@ -79,7 +97,7 @@ export const createCheckoutSchema = z.object({
 
 export const createReturnSchema = z.object({
   quantity,
-  returnedOn: dateOnly,
+  returnedOn: pastOrToday("The return date cannot be later than today."),
   returnedBy: z.string().trim().min(1, "Enter who is returning the equipment.").max(80),
   conditionIn: condition,
   notes: z.string().trim().max(300).optional(),
@@ -90,13 +108,13 @@ export const createMaintenanceSchema = z.object({
   type: z.enum(["Inspection", "Calibration", "Repair", "Service", "Gas refill"]),
   status: z.enum(["scheduled", "in_progress", "completed"]).default("in_progress"),
   technician: z.string().trim().min(1, "Enter who is doing the work.").max(80),
-  openedOn: dateOnly,
+  openedOn: pastOrToday("The opened date cannot be later than today."),
   notes: z.string().trim().max(300).optional(),
   quantity,
 })
 
 export const completeMaintenanceSchema = z.object({
-  completedOn: dateOnly,
+  completedOn: pastOrToday("The completed date cannot be later than today."),
   notes: z.string().trim().max(300).optional(),
 })
 

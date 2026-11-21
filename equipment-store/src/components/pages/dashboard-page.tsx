@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { DateField, FilterSelect, Panel, SearchField } from "@/components/controls"
 import { EmptyState } from "@/components/empty-state"
+import { LogoHold } from "@/components/layout/logo-hold"
 import {
   Table,
   TableBody,
@@ -27,8 +28,10 @@ import {
 import { formatWhen, isPastDue } from "@/lib/format"
 import { statusFor, sumCounts } from "@/lib/stock"
 import { useStore } from "@/lib/store"
-import { STORE_TODAY, type Equipment, type MaintenanceLog, type Transaction } from "@/lib/types"
+import { storeToday, type Equipment, type MaintenanceLog, type Transaction } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { useResetWhen } from "@/hooks/use-reset-when"
+import { useStoreToday } from "@/hooks/use-store-today"
 
 type UsageSlice = { id: string; name: string; used: number; percent: number; color: string }
 
@@ -74,12 +77,15 @@ function UsageDonut({ slices }: { slices: UsageSlice[] }) {
   const cy = 110
   const outer = 78
   const inner = 50
-  let cursor = -Math.PI / 2
+  // Each slice starts where the previous sweep ended. Derived from the slices
+  // before it instead of mutating a running cursor inside the map.
   const arcs = drawn.map((slice, index) => {
     const sweep = (slice.percent / 100) * Math.PI * 2
-    const start = cursor
-    const end = index === drawn.length - 1 ? -Math.PI / 2 - Math.PI * 2 : cursor - sweep
-    cursor -= sweep
+    const sweptBefore = drawn
+      .slice(0, index)
+      .reduce((total, earlier) => total + (earlier.percent / 100) * Math.PI * 2, 0)
+    const start = -Math.PI / 2 - sweptBefore
+    const end = index === drawn.length - 1 ? -Math.PI / 2 - Math.PI * 2 : start - sweep
     const gap = drawn.length > 1 ? Math.min(0.04, (start - end) * 0.18) : 0
     return { ...slice, start: start - gap / 2, end: end + gap / 2 }
   })
@@ -145,6 +151,13 @@ function labelDate(iso: string) {
   })
 }
 
+/**
+ * How long the mark holds the screen after a day is chosen. The figures are
+ * recomputed instantly, so this is a deliberate beat — long enough to read as
+ * "loading an earlier day" and short enough not to feel like a stall.
+ */
+const AS_OF_HOLD_MS = 5500
+
 function shiftMonth(cursor: string, delta: number) {
   const [year, month] = cursor.split("-").map(Number)
   return isoUTC(new Date(Date.UTC(year, month - 1 + delta, 1))).slice(0, 7)
@@ -206,10 +219,15 @@ function TrendCalendar({
   marked: ReadonlySet<string>
 }) {
   const [cursor, setCursor] = React.useState(value.slice(0, 7))
-  React.useEffect(() => {
-    setCursor(value.slice(0, 7))
-  }, [value])
+  // Follow the selected day when it moves; the month arrows stay independent.
+  useResetWhen(value, () => setCursor(value.slice(0, 7)))
   const month = monthCells(cursor)
+  // Today is the last day that can be asked for: the dashboard replays what has
+  // already happened, so a day the store has not reached yet stays shut — and
+  // there is no month past this one worth browsing. Read live, so the day that
+  // becomes today opens by itself while the screen is still open.
+  const limit = useStoreToday()
+  const atLatestMonth = cursor >= limit.slice(0, 7)
 
   return (
     <div className="flex h-full flex-col bg-white px-3 py-3">
@@ -225,8 +243,12 @@ function TrendCalendar({
         <p className="text-[12px] font-normal text-slate-800">{month.label}</p>
         <button
           type="button"
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50"
+          className={cn(
+            "flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 transition-colors duration-150",
+            atLatestMonth ? "cursor-not-allowed text-slate-300" : "text-slate-500 hover:bg-slate-50",
+          )}
           aria-label="Next month"
+          disabled={atLatestMonth}
           onClick={() => setCursor((current) => shiftMonth(current, 1))}
         >
           <ChevronRight className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
@@ -242,21 +264,25 @@ function TrendCalendar({
       <div className="mt-1 grid flex-1 auto-rows-fr grid-cols-7 gap-1">
         {month.cells.map((cell) => {
           const selected = cell.iso === value
-          const today = cell.iso === STORE_TODAY
+          const today = cell.iso === limit
+          const future = cell.iso > limit
           return (
             <button
               key={cell.iso}
               type="button"
               aria-label={labelDate(cell.iso)}
               aria-pressed={selected}
+              disabled={future}
               onClick={() => onChange(cell.iso)}
               className={cn(
                 "relative flex h-full min-h-7 items-center justify-center rounded-md text-[11px] font-normal tabular-nums transition-colors duration-150",
-                selected
-                  ? "bg-emerald-600 text-white"
-                  : cell.inMonth
-                    ? "text-slate-700 hover:bg-emerald-50"
-                    : "text-slate-300 hover:bg-slate-50",
+                future
+                  ? "cursor-not-allowed text-slate-200"
+                  : selected
+                    ? "bg-emerald-600 text-white"
+                    : cell.inMonth
+                      ? "text-slate-700 hover:bg-emerald-50"
+                      : "text-slate-300 hover:bg-slate-50",
                 today && !selected && "ring-1 ring-emerald-600",
               )}
             >
@@ -269,7 +295,7 @@ function TrendCalendar({
         })}
       </div>
       <p className="mt-2 text-[10px] font-normal text-slate-500">
-        {labelDate(value)}. Every record on or before this day loads across the dashboard.
+        {labelDate(value)}. Every record on or before this day loads across the dashboard. Days after today stay shut.
       </p>
     </div>
   )
@@ -279,8 +305,27 @@ export function DashboardPage() {
   const { equipment, categories, locations, transactions, activity, maintenance } = useStore()
   const [query, setQuery] = React.useState("")
   const [status, setStatus] = React.useState("all")
-  const [asOf, setAsOf] = React.useState(STORE_TODAY)
-  const cutoff = asOf || STORE_TODAY
+  const [asOf, setAsOf] = React.useState(storeToday())
+  // A picked day is answered with the logo alone; `nonce` lets a second pick
+  // restart the same hold instead of landing on an older timer.
+  const [hold, setHold] = React.useState<{ nonce: number; date: string } | null>(null)
+  React.useEffect(() => {
+    if (!hold) return
+    const timer = setTimeout(() => setHold(null), AS_OF_HOLD_MS)
+    return () => clearTimeout(timer)
+  }, [hold])
+  const cutoff = asOf || storeToday()
+
+  // Choosing a day replays the register as it stood then. The mark stands in
+  // for that work so the change never reads as a silent flicker. Days after
+  // today are refused here as well as in the calendar, so a typed date cannot
+  // slip past the closed cells.
+  const pickDate = (iso: string) => {
+    if (iso === asOf) return
+    if (iso && iso > storeToday()) return
+    setAsOf(iso)
+    setHold({ nonce: (hold?.nonce ?? 0) + 1, date: iso || storeToday() })
+  }
   const needle = query.trim().toLowerCase()
 
   const textOf = (asset: Equipment) => {
@@ -391,7 +436,7 @@ export function DashboardPage() {
           />
           <DateField
             value={asOf}
-            onChange={setAsOf}
+            onChange={pickDate}
             icon={<Calendar className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />}
           />
         </div>
@@ -451,7 +496,7 @@ export function DashboardPage() {
           title="Calendar"
           icon={<Calendar className="h-4 w-4 shrink-0 text-emerald-600" strokeWidth={1.75} />}
         >
-          <TrendCalendar value={cutoff} onChange={setAsOf} marked={marked} />
+          <TrendCalendar value={cutoff} onChange={pickDate} marked={marked} />
         </Panel>
       </div>
 
@@ -550,6 +595,7 @@ export function DashboardPage() {
         </Panel>
       </div>
 
+      {hold ? <LogoHold label={`Loading the register as it stood on ${labelDate(hold.date)}`} /> : null}
     </div>
   )
 }

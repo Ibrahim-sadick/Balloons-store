@@ -102,6 +102,11 @@ type StoreContextValue = StoreState & {
     quantity: number
   }) => Promise<Result>
   completeMaintenance: (id: string, input: { completedOn: string; notes: string }) => Promise<Result>
+  /**
+   * Deletes whole records: one id per ticked row. Movements accept the row id
+   * the list shows (`<checkoutId>` or `<checkoutId>:<returnId>`).
+   */
+  deleteRecords: (kind: DeleteKind, ids: string[]) => Promise<Result>
   setUserRole: (id: string, role: Role) => Promise<void>
   addCategory: (name: string) => Promise<Result>
   addLocation: (input: { name: string; zone: string }) => Promise<Result>
@@ -121,6 +126,18 @@ const EMPTY_STATE: StoreState = {
 
 type SessionPayload = { token: string; user: StaffUser }
 
+/** Which table a delete belongs to; each maps to its own API path. */
+export type DeleteKind = "equipment" | "movement" | "maintenance"
+
+const DELETE_PATHS: Record<DeleteKind, string> = {
+  equipment: "/api/equipment",
+  movement: "/api/checkouts",
+  maintenance: "/api/maintenance",
+}
+
+/** Which half of the snapshot a write can invalidate. */
+type ReloadScope = "all" | "ledger"
+
 type Sent = { ok: true } | { ok: false; message: string }
 
 function messageOf(error: unknown): string {
@@ -129,15 +146,19 @@ function messageOf(error: unknown): string {
   return "The store server did not answer. Try again."
 }
 
-function toState(data: StoreState): StoreState {
+/**
+ * A scoped refresh answers with the ledger only, so the reference tables keep
+ * whatever the last full load returned instead of being wiped to empty.
+ */
+function patchState(current: StoreState, data: Partial<StoreState>): StoreState {
   return {
-    equipment: data.equipment ?? [],
-    transactions: data.transactions ?? [],
-    maintenance: data.maintenance ?? [],
-    activity: data.activity ?? [],
-    users: data.users ?? [],
-    categories: data.categories ?? [],
-    locations: data.locations ?? [],
+    equipment: data.equipment ?? current.equipment,
+    transactions: data.transactions ?? current.transactions,
+    maintenance: data.maintenance ?? current.maintenance,
+    activity: data.activity ?? current.activity,
+    users: data.users ?? current.users,
+    categories: data.categories ?? current.categories,
+    locations: data.locations ?? current.locations,
   }
 }
 
@@ -147,9 +168,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = React.useState<string | null>(null)
   const [ready, setReady] = React.useState(false)
 
-  const load = React.useCallback(async (authToken: string) => {
-    const data = await apiRequest<StoreState>("/api/bootstrap", { token: authToken })
-    setState(toState(data))
+  const load = React.useCallback(async (authToken: string, scope: ReloadScope = "all") => {
+    const path = scope === "ledger" ? "/api/bootstrap?scope=ledger" : "/api/bootstrap"
+    const data = await apiRequest<Partial<StoreState>>(path, { token: authToken })
+    setState((current) => patchState(current, data))
   }, [])
 
   React.useEffect(() => {
@@ -158,18 +180,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const restore = async () => {
       const raw = window.sessionStorage.getItem(SESSION_KEY)
       if (!raw) return
+
+      let parsed: Partial<SessionPayload>
       try {
-        const parsed = JSON.parse(raw) as Partial<SessionPayload>
-        if (!parsed.token || !parsed.user) {
-          window.sessionStorage.removeItem(SESSION_KEY)
-          return
-        }
-        await load(parsed.token)
-        if (cancelled) return
-        setToken(parsed.token)
-        setSession(parsed.user)
+        parsed = JSON.parse(raw) as Partial<SessionPayload>
       } catch {
         window.sessionStorage.removeItem(SESSION_KEY)
+        return
+      }
+      if (!parsed.token || !parsed.user) {
+        window.sessionStorage.removeItem(SESSION_KEY)
+        return
+      }
+
+      // Paint the page that was being reloaded straight away, then confirm with
+      // the server. Only a token the server rejects ends the session; an API
+      // that is merely unreachable must not sign the operator out mid-shift.
+      setToken(parsed.token)
+      setSession(parsed.user)
+
+      try {
+        await load(parsed.token)
+      } catch (error) {
+        if (!cancelled && error instanceof ApiFailure && (error.status === 401 || error.status === 403)) {
+          window.sessionStorage.removeItem(SESSION_KEY)
+          setToken(null)
+          setSession(null)
+        }
       }
     }
 
@@ -191,11 +228,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   /** Every write refreshes the snapshot so counts and activity stay truthful. */
   const send = React.useCallback(
-    async <T,>(path: string, method: "POST" | "PATCH", body: unknown): Promise<{ ok: true; data: T } | { ok: false; message: string }> => {
+    async <T,>(path: string, method: "POST" | "PATCH", body: unknown, scope: ReloadScope = "all"): Promise<{ ok: true; data: T } | { ok: false; message: string }> => {
       if (!token) return { ok: false, message: "Sign in to continue." }
       try {
         const data = await apiRequest<T>(path, { method, body, token })
-        await load(token)
+        await load(token, scope)
         return { ok: true, data }
       } catch (error) {
         if (error instanceof ApiFailure && error.status === 401) clearSession()
@@ -230,7 +267,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           await load(data.token)
           return { ok: true }
         } catch (error) {
-          return { ok: false, message: messageOf(error) }
+          // A 401 is the only answer that means the store does not recognise this
+          // email and password pair. It carries a flag so the sign-in card can show
+          // the access notice in red rather than the generic server wording.
+          return { ok: false, message: messageOf(error), denied: error instanceof ApiFailure && error.status === 401 }
         }
       },
       signOut: () => {
@@ -268,38 +308,67 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           skipped: result.data.skipped,
         }
       },
-      updateEquipment: (id, patch) => asResult(send(`/api/equipment/${id}`, "PATCH", patch)),
+      updateEquipment: (id, patch) =>
+        asResult(send(`/api/equipment/${id}`, "PATCH", patch, "ledger")),
       issueEquipment: (input) =>
         asResult(
-          send("/api/checkouts", "POST", {
-            equipmentId: input.equipmentId,
-            quantity: input.quantity,
-            issuedTo: input.issuedTo,
-            expectedReturn: input.expectedReturn,
-            conditionOut: input.conditionOut,
-            notes: input.notes,
-          }),
+          send(
+            "/api/checkouts",
+            "POST",
+            {
+              equipmentId: input.equipmentId,
+              quantity: input.quantity,
+              issuedTo: input.issuedTo,
+              expectedReturn: input.expectedReturn,
+              conditionOut: input.conditionOut,
+              notes: input.notes,
+            },
+            "ledger",
+          ),
         ),
       returnEquipment: (input) =>
         asResult(
-          send(`/api/checkouts/${input.transactionId}/returns`, "POST", {
-            quantity: input.quantity,
-            returnedOn: input.returnedOn,
-            returnedBy: input.returnedBy,
-            conditionIn: input.conditionIn,
-            notes: input.notes,
-          }),
+          send(
+            `/api/checkouts/${input.transactionId}/returns`,
+            "POST",
+            {
+              quantity: input.quantity,
+              returnedOn: input.returnedOn,
+              returnedBy: input.returnedBy,
+              conditionIn: input.conditionIn,
+              notes: input.notes,
+            },
+            "ledger",
+          ),
         ),
-      logMaintenance: (input) => asResult(send("/api/maintenance", "POST", input)),
+      logMaintenance: (input) => asResult(send("/api/maintenance", "POST", input, "ledger")),
       completeMaintenance: (id, input) =>
-        asResult(send(`/api/maintenance/${id}/complete`, "POST", input)),
+        asResult(send(`/api/maintenance/${id}/complete`, "POST", input, "ledger")),
+      deleteRecords: async (kind, ids) => {
+        if (!token) return { ok: false, message: "Sign in to continue." }
+        // One refusal must not abandon the rest of the selection, so every id is
+        // attempted and the first real reason is reported at the end.
+        let firstFailure = ""
+        for (const id of ids) {
+          try {
+            await apiRequest(`${DELETE_PATHS[kind]}/${encodeURIComponent(id)}`, {
+              method: "DELETE",
+              token,
+            })
+          } catch (error) {
+            if (!firstFailure) firstFailure = messageOf(error)
+          }
+        }
+        await load(token, "ledger")
+        return firstFailure ? { ok: false, message: firstFailure } : { ok: true }
+      },
       setUserRole: async (id, role) => {
         await send(`/api/users/${id}`, "PATCH", { role })
       },
       addCategory: (name) => asResult(send("/api/categories", "POST", { name })),
       addLocation: (input) => asResult(send("/api/locations", "POST", input)),
     }
-  }, [state, session, ready, send, clearSession, load])
+  }, [state, session, ready, send, clearSession, load, token])
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }

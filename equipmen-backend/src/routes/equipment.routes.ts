@@ -8,6 +8,7 @@ import {
   importSchema,
   parseBody,
   updateEquipmentSchema,
+  type ImportRow,
 } from "../validation"
 import { requireAuth, requireWriter } from "../auth"
 import {
@@ -20,7 +21,7 @@ import {
 } from "../stock"
 import { toEquipmentDto } from "../dto"
 import { listEquipment } from "../register"
-import { codeFromName, sentenceCase } from "../text"
+import { codeFromName, sentenceCase, tidyLabel } from "../text"
 
 export const equipmentRouter = Router()
 equipmentRouter.use(requireAuth)
@@ -82,6 +83,92 @@ async function uniqueSerial(db: Db, serial: string | undefined, ignoreId?: strin
   })
   if (clash) throw conflict(`Serial ${value} is already on the register.`)
   return value
+}
+
+type PreparedImportRow = {
+  line: number
+  name: string
+  quantity: number
+  serial: string
+  categoryName: string
+  locationName: string
+  manufacturer: string
+  model: string
+  condition: Condition
+  acquiredOn: string
+  notes: string
+}
+
+/**
+ * Everything that can be judged without touching the database. Runs before the
+ * write so a bad file reports every problem with its line number instead of
+ * rolling back halfway through.
+ */
+function prepareImport(rows: ImportRow[]): {
+  accepted: PreparedImportRow[]
+  skipped: { line: number; message: string }[]
+} {
+  const accepted: PreparedImportRow[] = []
+  const skipped: { line: number; message: string }[] = []
+  const serialLines = new Map<string, number>()
+
+  for (const row of rows) {
+    const quantity = row.quantity.trim() ? Number(row.quantity) : 1
+
+    if (!row.name) {
+      skipped.push({ line: row.line, message: "Name is required." })
+      continue
+    }
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      skipped.push({
+        line: row.line,
+        message: "Number must be a whole number such as 5, 10, or 50.",
+      })
+      continue
+    }
+    if (!row.categoryName || !row.locationName) {
+      skipped.push({ line: row.line, message: "Category and location are required." })
+      continue
+    }
+
+    const serial = row.serialNumber.trim()
+    if (serial) {
+      const earlier = serialLines.get(serial.toLowerCase())
+      if (earlier !== undefined) {
+        skipped.push({
+          line: row.line,
+          message: `Serial ${serial} already appears on line ${earlier} of this file.`,
+        })
+        continue
+      }
+      serialLines.set(serial.toLowerCase(), row.line)
+    }
+
+    // A row dated after today would file equipment the store has not received
+    // yet, so it is reported back with its line number instead of being stored.
+    const acquiredOn = /^\d{4}-\d{2}-\d{2}$/.test(row.acquiredOn) ? row.acquiredOn : today()
+    if (acquiredOn > today()) {
+      skipped.push({ line: row.line, message: "The acquired date cannot be later than today." })
+      continue
+    }
+
+    accepted.push({
+      line: row.line,
+      name: tidyLabel(row.name),
+      quantity,
+      serial,
+      categoryName: row.categoryName,
+      locationName: row.locationName,
+      manufacturer: row.manufacturer ? tidyLabel(row.manufacturer) : "",
+      model: row.model,
+      condition:
+        CONDITIONS.find((entry) => entry.toLowerCase() === row.condition.toLowerCase()) ?? "Good",
+      acquiredOn,
+      notes: row.notes,
+    })
+  }
+
+  return { accepted, skipped }
 }
 
 equipmentRouter.get(
@@ -209,73 +296,88 @@ equipmentRouter.post(
   asyncHandler(async (req, res) => {
     const { rows } = parseBody(importSchema, req.body)
     const actor = req.user!
-    const skipped: { line: number; message: string }[] = []
-    let addedUnits = 0
-    let addedRows = 0
+    const { accepted: candidates, skipped } = prepareImport(rows)
 
-    await prisma.$transaction(async (tx) => {
-      for (const row of rows) {
-        const quantity = row.quantity.trim() ? Number(row.quantity) : 1
-        if (!row.name) {
-          skipped.push({ line: row.line, message: "Name is required." })
-          continue
-        }
-        if (!Number.isInteger(quantity) || quantity < 1) {
-          skipped.push({
-            line: row.line,
-            message: "Number must be a whole number such as 5, 10, or 50.",
-          })
-          continue
-        }
-        if (!row.categoryName || !row.locationName) {
-          skipped.push({ line: row.line, message: "Category and location are required." })
-          continue
-        }
-        if (row.serialNumber) {
-          const clash = await tx.equipment.findFirst({ where: { serialNumber: row.serialNumber } })
-          if (clash) {
-            skipped.push({
-              line: row.line,
-              message: `Serial ${row.serialNumber} is already on the register.`,
-            })
-            continue
-          }
-        }
-
-        const category = await resolveCategory(tx, { categoryName: row.categoryName })
-        const location = await resolveLocation(tx, { locationName: row.locationName })
-        const assetTag = `BLN-${await nextSequence(tx, "assetTag", 10000)}`
-        const condition = CONDITIONS.find((entry) => entry.toLowerCase() === row.condition.toLowerCase()) ?? "Good"
-
-        await tx.equipment.create({
-          data: {
-            assetTag,
-            name: sentenceCase(row.name),
-            categoryId: category.id,
-            locationId: location.id,
-            serialNumber: row.serialNumber || null,
-            manufacturer: row.manufacturer ? sentenceCase(row.manufacturer) : null,
-            model: row.model || null,
-            condition,
-            acquiredOn: toDate(row.acquiredOn && /^\d{4}-\d{2}-\d{2}$/.test(row.acquiredOn) ? row.acquiredOn : today()),
-            notes: sentenceCase(row.notes),
-            quantity,
-          },
-        })
-
-        addedUnits += quantity
-        addedRows += 1
+    // One lookup for the whole file instead of one query per row.
+    const serials = candidates.map((row) => row.serial).filter(Boolean)
+    const onRegister = new Set<string>()
+    if (serials.length > 0) {
+      const existing = await prisma.equipment.findMany({
+        where: { serialNumber: { in: serials } },
+        select: { serialNumber: true },
+      })
+      for (const item of existing) {
+        if (item.serialNumber) onRegister.add(item.serialNumber.toLowerCase())
       }
+    }
 
-      if (addedRows > 0) {
-        const totals = await tx.equipment.aggregate({ _sum: { quantity: true } })
-        await recordActivity(tx, {
-          actorId: actor.id,
-          actorName: actor.name,
-          summary: `Uploaded ${addedUnits} units from CSV. The register now has ${totals._sum.quantity ?? 0}.`,
+    const accepted = candidates.filter((row) => {
+      if (row.serial && onRegister.has(row.serial.toLowerCase())) {
+        skipped.push({
+          line: row.line,
+          message: `Serial ${row.serial} is already on the register.`,
         })
+        return false
       }
+      return true
     })
+    skipped.sort((left, right) => left.line - right.line)
+
+    let addedUnits = 0
+
+    await prisma.$transaction(
+      async (tx) => {
+        // Categories and locations repeat across rows, so each name is resolved once.
+        const categoryIds = new Map<string, string>()
+        const locationIds = new Map<string, string>()
+
+        for (const row of accepted) {
+          const categoryKey = row.categoryName.toLowerCase()
+          let categoryId = categoryIds.get(categoryKey)
+          if (!categoryId) {
+            categoryId = (await resolveCategory(tx, { categoryName: row.categoryName })).id
+            categoryIds.set(categoryKey, categoryId)
+          }
+
+          const locationKey = row.locationName.toLowerCase()
+          let locationId = locationIds.get(locationKey)
+          if (!locationId) {
+            locationId = (await resolveLocation(tx, { locationName: row.locationName })).id
+            locationIds.set(locationKey, locationId)
+          }
+
+          const assetTag = `BLN-${await nextSequence(tx, "assetTag", 10000)}`
+          await tx.equipment.create({
+            data: {
+              assetTag,
+              name: row.name,
+              categoryId,
+              locationId,
+              serialNumber: row.serial || null,
+              manufacturer: row.manufacturer || null,
+              model: row.model || null,
+              condition: row.condition,
+              acquiredOn: toDate(row.acquiredOn),
+              notes: row.notes,
+              quantity: row.quantity,
+            },
+          })
+
+          addedUnits += row.quantity
+        }
+
+        if (accepted.length > 0) {
+          const totals = await tx.equipment.aggregate({ _sum: { quantity: true } })
+          await recordActivity(tx, {
+            actorId: actor.id,
+            actorName: actor.name,
+            summary: `Uploaded ${addedUnits} units from CSV. The register now has ${totals._sum.quantity ?? 0}.`,
+          })
+        }
+      },
+      // A 500-row file issues a few statements per row; the 5 s default is far too tight.
+      { maxWait: 10_000, timeout: 120_000 },
+    )
 
     const totals = await prisma.equipment.aggregate({ _sum: { quantity: true } })
 
@@ -285,5 +387,50 @@ equipmentRouter.post(
       total: totals._sum.quantity ?? 0,
       skipped,
     })
+  }),
+)
+
+/**
+ * Removing an asset takes its movements and repair logs with it: a check-out
+ * row cannot outlive the item it points at. The counts are returned so the
+ * screen can say exactly what went, and the operator has confirmed it in the
+ * dialog before the request is ever sent.
+ */
+equipmentRouter.delete(
+  "/:id",
+  requireWriter,
+  asyncHandler(async (req, res) => {
+    const actor = req.user!
+    const id = String(req.params.id)
+
+    const removed = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM equipment WHERE id = ${id} FOR UPDATE
+      `
+      if (!locked[0]) throw notFound("That asset is no longer in the register.")
+
+      const item = await tx.equipment.findUniqueOrThrow({ where: { id } })
+      const [checkins, checkouts, repairs] = await Promise.all([
+        tx.checkReturn.count({ where: { checkout: { equipmentId: item.id } } }),
+        tx.checkout.count({ where: { equipmentId: item.id } }),
+        tx.maintenanceLog.count({ where: { equipmentId: item.id } }),
+      ])
+
+      await tx.checkReturn.deleteMany({ where: { checkout: { equipmentId: item.id } } })
+      await tx.checkout.deleteMany({ where: { equipmentId: item.id } })
+      await tx.maintenanceLog.deleteMany({ where: { equipmentId: item.id } })
+      await tx.equipment.delete({ where: { id: item.id } })
+
+      await recordActivity(tx, {
+        actorId: actor.id,
+        actorName: actor.name,
+        summary: `Deleted ${item.assetTag} ${item.name} with ${checkouts} check-out${checkouts === 1 ? "" : "s"}, ${checkins} check-in${checkins === 1 ? "" : "s"} and ${repairs} repair log${repairs === 1 ? "" : "s"}.`,
+        equipmentId: null,
+      })
+
+      return { assetTag: item.assetTag, name: item.name, units: item.quantity, checkouts, checkins, repairs }
+    })
+
+    res.json({ ok: true, removed })
   }),
 )

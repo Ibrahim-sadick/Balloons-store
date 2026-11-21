@@ -118,3 +118,36 @@ maintenanceRouter.post(
     res.json({ ok: true, maintenance: toMaintenanceDto(updated) })
   }),
 )
+
+/** Removes one repair log. An in-progress log that goes away releases its units. */
+maintenanceRouter.delete(
+  "/:id",
+  requireWriter,
+  asyncHandler(async (req, res) => {
+    const actor = req.user!
+    const id = String(req.params.id)
+
+    const removed = await prisma.$transaction(async (tx) => {
+      const log = await tx.maintenanceLog.findUnique({ where: { id } })
+      if (!log) throw notFound("That maintenance job is no longer on record.")
+
+      await lockEquipment(tx, log.equipmentId)
+      const item = await tx.equipment.findUnique({ where: { id: log.equipmentId } })
+
+      await tx.maintenanceLog.delete({ where: { id: log.id } })
+
+      await recordActivity(tx, {
+        actorId: actor.id,
+        actorName: actor.name,
+        summary: item
+          ? `Deleted the ${humanType(log.type)} log for ${log.quantity} ${item.name}.`
+          : `Deleted the ${humanType(log.type)} log for ${log.quantity} units.`,
+        equipmentId: log.equipmentId,
+      })
+
+      return { ref: log.ref, units: log.quantity, status: log.status }
+    })
+
+    res.json({ ok: true, removed })
+  }),
+)

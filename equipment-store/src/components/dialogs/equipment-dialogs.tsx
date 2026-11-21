@@ -25,7 +25,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { sentenceCase } from "@/lib/format"
 import { countsFor } from "@/lib/stock"
 import { ConditionBadge } from "@/components/status-badge"
-import { STORE_TODAY, type Condition, type Equipment } from "@/lib/types"
+import { storeToday, type Condition, type Equipment } from "@/lib/types"
 import { useStore } from "@/lib/store"
 
 const conditions: Condition[] = ["New", "Good", "Fair", "Poor"]
@@ -55,7 +55,7 @@ export function AddEquipmentDialog({
   const [serialNumber, setSerialNumber] = React.useState("")
   const [quantity, setQuantity] = React.useState("1")
   const [condition, setCondition] = React.useState<Condition>("Good")
-  const [acquiredOn, setAcquiredOn] = React.useState(STORE_TODAY)
+  const [acquiredOn, setAcquiredOn] = React.useState(storeToday())
   const [notes, setNotes] = React.useState("")
   const [error, setError] = React.useState("")
 
@@ -67,7 +67,7 @@ export function AddEquipmentDialog({
     setSerialNumber("")
     setQuantity("1")
     setCondition("Good")
-    setAcquiredOn(STORE_TODAY)
+    setAcquiredOn(storeToday())
     setNotes("")
     setError("")
   })
@@ -82,6 +82,13 @@ export function AddEquipmentDialog({
             const picked = categories.find((item) => item.id === categoryId)
             if (!picked) {
               setError("Select a category from the list.")
+              return
+            }
+            // The register only holds what has already been filed away, so a day
+            // the store has not reached yet is refused here as well as in the
+            // date field's own ceiling.
+            if (acquiredOn > storeToday()) {
+              setError("The acquired date cannot be later than today.")
               return
             }
             const pickedLocation = locations.find((item) => item.id === locationId) ?? locations[0]
@@ -175,7 +182,7 @@ export function AddEquipmentDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="add-acquired">Acquired</Label>
-              <Input id="add-acquired" type="date" value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
+              <Input id="add-acquired" type="date" max={storeToday()} value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <Label htmlFor="add-notes">Cage notes</Label>
@@ -216,7 +223,7 @@ export function EditEquipmentDialog({
   const [manufacturer, setManufacturer] = React.useState("")
   const [model, setModel] = React.useState("")
   const [condition, setCondition] = React.useState<Condition>("Good")
-  const [acquiredOn, setAcquiredOn] = React.useState(STORE_TODAY)
+  const [acquiredOn, setAcquiredOn] = React.useState(storeToday())
   const [notes, setNotes] = React.useState("")
   const [error, setError] = React.useState("")
 
@@ -243,6 +250,10 @@ export function EditEquipmentDialog({
           onSubmit={async (event) => {
             event.preventDefault()
             if (!equipment) return
+            if (acquiredOn > storeToday()) {
+              setError("The acquired date cannot be later than today.")
+              return
+            }
             const result = await updateEquipment(equipment.id, {
               name,
               categoryId,
@@ -313,7 +324,7 @@ export function EditEquipmentDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit-acquired">Acquired</Label>
-              <Input id="edit-acquired" type="date" value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
+              <Input id="edit-acquired" type="date" max={storeToday()} value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
             </div>
             <div className="flex flex-col gap-1.5 sm:col-span-2">
               <Label htmlFor="edit-notes">Cage notes</Label>

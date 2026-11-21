@@ -1,20 +1,6 @@
-# Local database engine data (never commit an InnoDB data directory)
-**/.mysql/
-
-# Dependencies and build output
-**/node_modules/
-**/.next/
-**/dist/
-**/out/
-**/*.tsbuildinfo
-
-# Environment files (examples are kept)
+node_modules/
+.next/
+.mysql/
 .env
 .env.local
-.env.*.local
-!**/.env.example
-
-# Logs, OS noise, editor scratch
-*.log
-.DS_Store
-Thumbs.db
+build.log

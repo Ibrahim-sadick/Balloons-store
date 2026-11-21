@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { startSignOut } from "@/lib/sign-out-veil"
 import logo from "@/shine baloons.png"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -62,6 +63,17 @@ export function SidebarBody({
   const pathname = usePathname()
   const router = useRouter()
   const { signOut } = useStore()
+
+  // Nothing here holds a loading flag: Next keeps this dashboard tree mounted
+  // behind /login, so a local "Signing out" state would come back with the next
+  // session and leave the button stuck. The veil in the root layout is the only
+  // thing that waits.
+  const handleSignOut = () => {
+    signOut()
+    startSignOut()
+    onNavigate?.()
+    router.replace("/login")
+  }
 
   return (
     <div className="flex h-full w-[200px] flex-col bg-white">
@@ -147,11 +159,7 @@ export function SidebarBody({
         <button
           type="button"
           className="flex h-7 w-full items-center gap-2 rounded-md border border-rose-600 bg-rose-600 px-2 text-[11px] font-normal text-white transition-colors duration-200 hover:bg-rose-700"
-          onClick={() => {
-            signOut()
-            onNavigate?.()
-            router.replace("/login")
-          }}
+          onClick={handleSignOut}
         >
           <LogOut className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
           Log out

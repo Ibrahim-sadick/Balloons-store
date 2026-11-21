@@ -3,7 +3,22 @@
  * data of its own: every read and write goes through here.
  */
 
-const BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000").replace(/\/$/, "")
+const API_PORT = 4000
+
+/**
+ * Which server to talk to. `NEXT_PUBLIC_API_URL` wins when set (a real deploy).
+ * Otherwise mirror the host that served the page and swap only the port: opened
+ * from a phone, "localhost" means the phone itself, so a baked-in
+ * http://localhost:4000 refuses every call even when the desk PC is running.
+ */
+function resolveBaseUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim()
+  if (configured) return configured.replace(/\/$/, "")
+  if (typeof window !== "undefined" && window.location.hostname) {
+    return `${window.location.protocol}//${window.location.hostname}:${API_PORT}`
+  }
+  return `http://localhost:${API_PORT}`
+}
 
 export class ApiFailure extends Error {
   constructor(
@@ -25,7 +40,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   let response: Response
 
   try {
-    response = await fetch(`${BASE_URL}${path}`, {
+    response = await fetch(`${resolveBaseUrl()}${path}`, {
       method: options.method ?? "GET",
       headers: {
         "content-type": "application/json",

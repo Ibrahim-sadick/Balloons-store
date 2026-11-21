@@ -7,6 +7,7 @@ import {
   fieldInputClass,
   FilterSelect,
   FormError,
+  Spinner,
 } from "@/components/controls"
 import { Button } from "@/components/ui/button"
 import {
@@ -21,8 +22,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { ConditionBadge } from "@/components/status-badge"
-import { STORE_TODAY, type Condition, type Transaction } from "@/lib/types"
+import { storeToday, type Condition, type Transaction } from "@/lib/types"
 import { useStore } from "@/lib/store"
+import { useResetWhen } from "@/hooks/use-reset-when"
 
 const conditionsIn: Condition[] = ["New", "Good", "Fair", "Damaged"]
 
@@ -40,26 +42,25 @@ export function ReturnItemDialog({
   const { equipment, transactions, returnEquipment } = useStore()
   const openCheckouts = transactions.filter((item) => !item.returnedOn)
   const [selectedId, setSelectedId] = React.useState("")
-  const [returnedOn, setReturnedOn] = React.useState(STORE_TODAY)
+  const [returnedOn, setReturnedOn] = React.useState(storeToday())
   const [returnedBy, setReturnedBy] = React.useState("")
   const [condition, setCondition] = React.useState<Condition>("Good")
   const [notes, setNotes] = React.useState("")
   const [returnQty, setReturnQty] = React.useState("1")
   const [error, setError] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
 
-  React.useEffect(() => {
-    if (!open) return
+  useResetWhen(`${open}:${transaction?.id ?? ""}`, () => {
     const initial = transaction && !transaction.returnedOn ? transaction : openCheckouts[0]
     setSelectedId(initial?.id ?? "")
-    setReturnedOn(STORE_TODAY)
+    setReturnedOn(storeToday())
     setReturnedBy(initial?.issuedTo ?? "")
     setReturnQty(String(initial?.quantity ?? 1))
     setCondition("Good")
     setNotes("")
     setError(initial ? "" : "Nothing is currently outside.")
-    // Open checkouts are read when the dialog opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, transaction])
+    setSaving(false)
+  })
 
   const selected = openCheckouts.find((item) => item.id === selectedId) ?? null
   const asset = equipment.find((item) => item.id === selected?.equipmentId)
@@ -73,21 +74,32 @@ export function ReturnItemDialog({
           className="flex flex-col gap-3"
           onSubmit={async (event) => {
             event.preventDefault()
-            if (!selected) return
-            const result = await returnEquipment({
-              transactionId: selected.id,
-              conditionIn: condition,
-              notes,
-              returnedOn,
-              returnedBy,
-              quantity: comingBack,
-            })
-            if (!result.ok) {
-              setError(result.message)
+            if (!selected || saving) return
+            // Equipment comes back on or before today; a later day would put a
+            // return on the books before it happened.
+            if (returnedOn > storeToday()) {
+              setError("The return date cannot be later than today.")
               return
             }
-            onReturned?.()
-            onOpenChange(false)
+            setSaving(true)
+            try {
+              const result = await returnEquipment({
+                transactionId: selected.id,
+                conditionIn: condition,
+                notes,
+                returnedOn,
+                returnedBy,
+                quantity: comingBack,
+              })
+              if (!result.ok) {
+                setError(result.message)
+                return
+              }
+              onReturned?.()
+              onOpenChange(false)
+            } finally {
+              setSaving(false)
+            }
           }}
         >
           <DialogHeader>
@@ -150,6 +162,7 @@ export function ReturnItemDialog({
               <Input
                 id="return-date"
                 type="date"
+                max={storeToday()}
                 value={returnedOn}
                 onChange={(event) => setReturnedOn(event.target.value)}
                 className={`${fieldInputClass} font-mono tabular-nums`}
@@ -189,12 +202,16 @@ export function ReturnItemDialog({
           </p>
           <FormError message={error} />
           <DialogFooter>
-            <Button type="button" variant="outline" className="rounded-md" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" className="rounded-md" disabled={saving} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <EmeraldButton type="submit" disabled={!selected}>
-              <PackageCheck className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              Return equipment
+            <EmeraldButton type="submit" disabled={!selected || saving} aria-busy={saving}>
+              {saving ? (
+                <Spinner className="h-4 w-4" />
+              ) : (
+                <PackageCheck className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              )}
+              {saving ? "Saving..." : "Return equipment"}
             </EmeraldButton>
           </DialogFooter>
         </form>

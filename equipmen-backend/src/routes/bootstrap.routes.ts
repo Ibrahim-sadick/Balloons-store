@@ -2,7 +2,7 @@ import { Router } from "express"
 import { prisma } from "../db"
 import { asyncHandler } from "../http"
 import { requireAuth } from "../auth"
-import { listEquipment, registerSnapshot } from "../register"
+import { listEquipment, ledgerSnapshot, registerSnapshot } from "../register"
 
 export const bootstrapRouter = Router()
 bootstrapRouter.use(requireAuth)
@@ -10,7 +10,12 @@ bootstrapRouter.use(requireAuth)
 /** One round-trip for the whole register; the store is small enough for it. */
 bootstrapRouter.get(
   "/",
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    // After a check-out only the ledger moved, so settings tables can be skipped.
+    if (req.query.scope === "ledger") {
+      res.json({ ok: true, ...(await ledgerSnapshot(prisma)) })
+      return
+    }
     res.json({ ok: true, ...(await registerSnapshot(prisma)) })
   }),
 )

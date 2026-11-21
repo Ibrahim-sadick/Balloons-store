@@ -3,8 +3,14 @@ function localDate(now: Date) {
   return new Date(now.getTime() - offset * 60_000).toISOString().slice(0, 10)
 }
 
-/** The real calendar date. Drives defaults, overdue checks and printed receipts. */
-export const STORE_TODAY = localDate(new Date())
+/**
+ * The real calendar date. Drives defaults, overdue checks and printed receipts.
+ * Read on every call, not stored at module load, so a tab left open overnight
+ * does not keep using yesterday.
+ */
+export function storeToday(): string {
+  return localDate(new Date())
+}
 
 export type EquipmentStatus = "available" | "checked_out" | "maintenance"
 export type Condition = "New" | "Excellent" | "Good" | "Fair" | "Poor" | "Damaged"
@@ -86,4 +92,4 @@ export type StoreLocation = {
   zone: string
 }
 
-export type Result = { ok: true } | { ok: false; message: string }
+export type Result = { ok: true } | { ok: false; message: string; denied?: boolean }

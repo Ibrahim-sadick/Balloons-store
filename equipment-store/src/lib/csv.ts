@@ -1,5 +1,14 @@
+/**
+ * Excel and Sheets execute any cell that starts with =, +, - or @. A store name
+ * such as "=HYPERLINK(...)" must stay text, so it gets an apostrophe prefix,
+ * which both programs strip when the file is opened.
+ */
+function cellText(value: string) {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value
+}
+
 function escapeCell(value: string) {
-  return `"${value.replaceAll('"', '""')}"`
+  return `"${cellText(value).replaceAll('"', '""')}"`
 }
 
 export function parseCsv(text: string) {

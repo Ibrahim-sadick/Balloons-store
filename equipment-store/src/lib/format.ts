@@ -1,4 +1,4 @@
-import { STORE_TODAY } from "@/lib/types"
+import { storeToday } from "@/lib/types"
 
 export function inRange(date: string, from: string, to: string) {
   if (from && date < from) return false
@@ -6,7 +6,7 @@ export function inRange(date: string, from: string, to: string) {
   return true
 }
 
-export function isPastDue(expected: string | null, asOf = STORE_TODAY) {
+export function isPastDue(expected: string | null, asOf = storeToday()) {
   if (!expected) return false
   return expected < asOf
 }

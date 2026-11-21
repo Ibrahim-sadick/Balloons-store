@@ -16,9 +16,24 @@ export function createApp() {
   const app = express()
 
   app.disable("x-powered-by")
+  // Baseline hardening without a helmet dependency: JSON responses only, never
+  // framed, never sniffed, and no HSTS before the connection is actually TLS.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader("X-Content-Type-Options", "nosniff")
+    res.setHeader("X-Frame-Options", "DENY")
+    res.setHeader("Referrer-Policy", "no-referrer")
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if (env.isProduction) {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    }
+    next()
+  })
   app.use(
     cors({
-      origin: env.corsOrigins.length > 0 ? env.corsOrigins : true,
+      // A tablet opens the app at http://192.168.1.7:3000 and the browser sends
+      // that as the Origin, so a localhost-only allow-list never matches it. That
+      // is what made the app look broken on every device except this one.
+      origin: (requestOrigin, callback) => callback(null, isAllowedOrigin(requestOrigin)),
       credentials: true,
     }),
   )
@@ -27,7 +42,7 @@ export function createApp() {
 
   // Liveness plus a database probe, so a deploy can tell the two failures apart.
   app.get("/api/health", async (_req: Request, res: Response) => {
-    let database: "connected" | "unreachable" = "unreachable"
+    let database: "connected" | "unreachable"
     try {
       await prisma.$queryRaw`SELECT 1`
       database = "connected"
@@ -79,4 +94,44 @@ export function createApp() {
   })
 
   return app
+}
+
+/**
+ * Which origins may call the API. `CORS_ORIGIN` still wins for anything unusual
+ * (a LAN hostname, a tunnel, a real domain); otherwise the store's own local
+ * network is trusted so any phone, tablet or second PC on the same Wi-Fi works.
+ * Public origins stay refused: the session also rides in an httpOnly cookie, so
+ * reflecting every origin would let another site reuse a signed-in browser.
+ */
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true // curl, server-to-server and native shells send none
+  if (env.corsOrigins.includes(origin)) return true
+
+  let host: string
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false
+    host = url.hostname.replace(/^\[|\]$/g, "")
+  } catch {
+    return false
+  }
+
+  if (host === "localhost" || host === "::1") return true
+
+  const octets = host.split(".")
+  if (octets.length !== 4) return false
+  const numbers = octets.map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : Number.NaN))
+  if (numbers.some((value) => Number.isNaN(value) || value > 255)) return false
+
+  const first = numbers[0]
+  const second = numbers[1]
+  if (first === undefined || second === undefined) return false
+  // 10/8, 172.16/12 and 192.168/16 are the private ranges a shop Wi-Fi hands out;
+  // 127/8 is the machine itself. 169.254/16 is deliberately left out.
+  return (
+    first === 127 ||
+    first === 10 ||
+    (first === 192 && second === 168) ||
+    (first === 172 && second >= 16 && second <= 31)
+  )
 }

@@ -35,7 +35,7 @@ async function main() {
     })
   }
 
-  const email = (process.env.SEED_ADMIN_EMAIL ?? "admin@balons.store").trim().toLowerCase()
+  const email = (process.env.SEED_ADMIN_EMAIL ?? "md@shineballoons.co.tz").trim().toLowerCase()
   const password = process.env.SEED_ADMIN_PASSWORD
   if (!password || password.length < 8) {
     throw new Error("Set SEED_ADMIN_PASSWORD (8+ characters) in .env before seeding.")

@@ -27,4 +27,6 @@ export const env = {
     .map((entry) => entry.trim())
     .filter(Boolean),
   jwtSecret: text("JWT_SECRET"),
+  // One flag for "the browser reaches us over HTTPS", used by cookies and headers.
+  isProduction: process.env.NODE_ENV === "production",
 }

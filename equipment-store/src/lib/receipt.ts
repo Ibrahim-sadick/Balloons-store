@@ -1,4 +1,4 @@
-import { STORE_TODAY } from "@/lib/types"
+import { storeToday } from "@/lib/types"
 
 export type EquipmentReceipt = {
   name: string
@@ -64,7 +64,7 @@ export function equipmentReceiptHtml(receipt: EquipmentReceipt) {
 <body>
   <p class="store">Shine Balloon Safaris</p>
   <p class="kicker">Equipment receipt</p>
-  <p class="muted">${escapeHtml(STORE_TODAY)}</p>
+  <p class="muted">${escapeHtml(storeToday())}</p>
   <hr class="rule" />
   <p class="item">${escapeHtml(receipt.name)}</p>
   ${line("Category", receipt.category || "—")}
