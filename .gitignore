@@ -1,6 +1,0 @@
-node_modules/
-.next/
-.mysql/
-.env
-.env.local
-build.log

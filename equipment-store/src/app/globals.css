@@ -140,6 +140,7 @@
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
 }
@@ -169,10 +170,12 @@
 }
 
 /*
- * The sign-out veil and its progress line follow the same rule as the spinner:
- * they carry their own classes so the reduced-motion clamp cannot freeze them.
- * The bar fills over 4.5s, the same hold the button waits before handing back
- * to the login screen, so the two read as one gesture rather than two timers.
+ * The sign-out veil: it cross-fades in, holds while the session is dropped, and
+ * fades out again before it unmounts - without that last phase the white screen
+ * disappeared between two frames and the login card arrived in one jump. The
+ * mark inside it is the only loading indicator, and it is the one animation
+ * exempted below from the reduced-motion clamp: a still mark would say that
+ * nothing is happening while the screen is held.
  */
 @keyframes balons-veil-in {
   from {
@@ -192,17 +195,7 @@
   }
 }
 
-@keyframes balons-bar-fill {
-  from {
-    transform: scaleX(0);
-  }
-  to {
-    transform: scaleX(1);
-  }
-}
-
-/* The only moving thing on the sign-out veil: the mark breathes slowly so the
-   wait reads as "working" without a second spinner beside the words. */
+/* The only moving thing on the sign-out veil: the mark on its own. */
 @keyframes balons-mark-blink {
   0%,
   100% {
@@ -221,11 +214,6 @@
   animation: balons-veil-out 260ms ease-in both;
 }
 
-.signout-bar {
-  transform-origin: left center;
-  animation: balons-bar-fill 5s cubic-bezier(0.35, 0, 0.25, 1) both;
-}
-
 .signout-mark {
   animation: balons-mark-blink 2.4s ease-in-out infinite;
 }
@@ -235,21 +223,88 @@
   animation: balons-mark-blink 2.4s ease-in-out infinite;
 }
 
+/* The question behind the header's logout icon: it slides down out of the
+   icon and back up when the answer is no. The global clamp shortens it for
+   devices that ask for less motion, which is what that preference wants. */
+@keyframes balons-logout-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+.logout-sheet {
+  transform-origin: top right;
+  animation: balons-logout-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .signout-veil {
-    animation: balons-veil-in 360ms ease-out both !important;
-  }
-  .signout-veil-out {
-    animation: balons-veil-out 260ms ease-in both !important;
-  }
-  .signout-bar {
-    animation: balons-bar-fill 5s cubic-bezier(0.35, 0, 0.25, 1) both !important;
-  }
+  /* The two fades are left to the global clamp further up: it collapses them
+     to an instant cut, which is exactly what this preference asks for. Only the
+     mark keeps moving, because it is the signal that the hold is running. */
   .signout-mark {
     animation: balons-mark-blink 2.4s ease-in-out infinite !important;
   }
   .logo-hold-mark {
     animation: balons-mark-blink 2.4s ease-in-out infinite !important;
+  }
+}
+
+/*
+ * The dashboard entrance. The tracks under "Most used" fill from their left
+ * edge, and the ring draws itself from twelve o'clock in one clockwise sweep
+ * while settling back from a slight turn. Both are one-shot, seven-second
+ * loads with no overshoot, and both replay on every mount — a return from any
+ * other section is a fresh one.
+ *
+ * They are the only motion on the dashboard and the store asked to watch them
+ * run, so they keep their full length even where the device asks for reduced
+ * motion: the same-media rules below outrank the universal clamp further up
+ * the sheet. Nothing here loops.
+ */
+@keyframes balons-track-fill {
+  from {
+    width: 0;
+  }
+}
+
+@keyframes balons-ring-sweep {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes balons-ring-settle {
+  from {
+    transform: rotate(-12deg);
+    opacity: 0.35;
+  }
+  to {
+    transform: rotate(0deg);
+    opacity: 1;
+  }
+}
+
+.track-fill {
+  animation: balons-track-fill 7s cubic-bezier(0.45, 0, 0.2, 1) both;
+}
+
+.donut-sweep {
+  animation: balons-ring-sweep 7s cubic-bezier(0.45, 0, 0.2, 1) both;
+}
+
+.donut-settle {
+  transform-box: view-box;
+  transform-origin: 110px 110px;
+  animation: balons-ring-settle 7s cubic-bezier(0.45, 0, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-fill,
+  .donut-sweep,
+  .donut-settle {
+    animation-duration: 7s !important;
+    animation-delay: 0ms !important;
   }
 }
 

@@ -4,14 +4,16 @@ import * as React from "react"
 import Link from "next/link"
 import {
   ArrowUpRight,
+  Boxes,
   Calendar,
   ChartPie,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleCheck,
   ClipboardCheck,
   ListFilter,
-  Package,
+  PackageCheck,
   Wrench,
 } from "lucide-react"
 import { DateField, FilterSelect, Panel, SearchField } from "@/components/controls"
@@ -77,6 +79,8 @@ function UsageDonut({ slices }: { slices: UsageSlice[] }) {
   const cy = 110
   const outer = 78
   const inner = 50
+  const ring = (outer + inner) / 2
+  const circumference = 2 * Math.PI * ring
   // Each slice starts where the previous sweep ended. Derived from the slices
   // before it instead of mutating a running cursor inside the map.
   const arcs = drawn.map((slice, index) => {
@@ -94,19 +98,40 @@ function UsageDonut({ slices }: { slices: UsageSlice[] }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-stretch gap-3 bg-white p-3 sm:flex-row sm:items-center">
       <svg viewBox="0 0 220 220" className="mx-auto h-[200px] w-[200px] shrink-0" role="img" aria-label={summary}>
-        {arcs.length === 0 ? (
-          <circle cx={cx} cy={cy} r={(outer + inner) / 2} fill="none" stroke="#e2e8f0" strokeWidth={outer - inner} />
-        ) : arcs.length === 1 ? (
-          <circle cx={cx} cy={cy} r={(outer + inner) / 2} fill="none" stroke={arcs[0].color} strokeWidth={outer - inner}>
-            <title>{`${arcs[0].name}: ${arcs[0].used} used, ${arcs[0].percent}%`}</title>
-          </circle>
-        ) : (
-          arcs.map((arc) => (
-            <path key={arc.id} d={slicePath(cx, cy, outer, inner, arc.start, arc.end)} fill={arc.color}>
-              <title>{`${arc.name}: ${arc.used} used, ${arc.percent}%`}</title>
-            </path>
-          ))
-        )}
+        <defs>
+          {/* A white ring the full width of the donut, drawn by a dash that
+              grows from nothing at twelve o'clock: over seven seconds the ring
+              appears clockwise in one sweep instead of all at once. */}
+          <mask id="usage-sweep" maskUnits="userSpaceOnUse" x="0" y="0" width="220" height="220">
+            <circle
+              className="donut-sweep"
+              cx={cx}
+              cy={cy}
+              r={ring}
+              fill="none"
+              stroke="#fff"
+              strokeWidth={outer - inner + 4}
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference}
+              transform={`rotate(-90 ${cx} ${cy})`}
+            />
+          </mask>
+        </defs>
+        <g className="donut-settle" mask="url(#usage-sweep)">
+          {arcs.length === 0 ? (
+            <circle cx={cx} cy={cy} r={ring} fill="none" stroke="#e2e8f0" strokeWidth={outer - inner} />
+          ) : arcs.length === 1 ? (
+            <circle cx={cx} cy={cy} r={ring} fill="none" stroke={arcs[0].color} strokeWidth={outer - inner}>
+              <title>{`${arcs[0].name}: ${arcs[0].used} used, ${arcs[0].percent}%`}</title>
+            </circle>
+          ) : (
+            arcs.map((arc) => (
+              <path key={arc.id} d={slicePath(cx, cy, outer, inner, arc.start, arc.end)} fill={arc.color}>
+                <title>{`${arc.name}: ${arc.used} used, ${arc.percent}%`}</title>
+              </path>
+            ))
+          )}
+        </g>
         <text x={cx} y={cy - 4} textAnchor="middle" fill="#334155" fontSize="13" fontWeight="400">
           {drawn[0] ? `${drawn[0].percent}%` : "0%"}
         </text>
@@ -114,20 +139,35 @@ function UsageDonut({ slices }: { slices: UsageSlice[] }) {
           Most used
         </text>
       </svg>
-      <ul className="min-h-0 max-h-[240px] flex-1 space-y-1.5 overflow-y-auto pr-1">
-        {slices.map((slice) => (
-          <li key={slice.id} className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
-            <span className="min-w-0 flex-1 truncate text-[11px] font-normal text-slate-700">
-              {slice.name}
-            </span>
-            <Link
-              href={`/transactions?asset=${slice.id}`}
-              className="font-mono text-[11px] font-normal tabular-nums hover:underline"
-              style={{ color: slice.color }}
-            >
-              {slice.percent}%
-            </Link>
+      <ul className="min-h-0 max-h-[240px] flex-1 space-y-2 overflow-y-auto pr-1">
+        {slices.map((slice, index) => (
+          <li key={slice.id}>
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} />
+              <span className="min-w-0 flex-1 truncate text-[11px] font-normal text-slate-700">
+                {slice.name}
+              </span>
+              <Link
+                href={`/transactions?asset=${slice.id}`}
+                className="font-mono text-[11px] font-normal tabular-nums hover:underline"
+                style={{ color: slice.color }}
+              >
+                {slice.percent}%
+              </Link>
+            </div>
+            {/* The line under each name tracks that share on the same scale for
+                every item, so the longest line is also the most-used one. Over
+                seven seconds it fills from the left, row after row. */}
+            <div className="mt-1 ml-[18px] h-1 overflow-hidden rounded-full bg-slate-100">
+              <span
+                className="track-fill block h-full rounded-full"
+                style={{
+                  width: `${slice.percent}%`,
+                  backgroundColor: slice.color,
+                  animationDelay: `${index * 120}ms`,
+                }}
+              />
+            </div>
           </li>
         ))}
       </ul>
@@ -157,6 +197,29 @@ function labelDate(iso: string) {
  * "loading an earlier day" and short enough not to feel like a stall.
  */
 const AS_OF_HOLD_MS = 5500
+
+// The dashboard opens on the half-dozen newest movements. Anything older is one
+// press away rather than six rows of scrolling the panel cannot show at once.
+const RECENT_VISIBLE = 6
+
+type StatTone = "slate" | "emerald" | "rose" | "amber"
+
+/** One colour per reading: a solid tile behind the icon, and the figure itself. */
+const statTones: Record<StatTone, { tile: string; value: string }> = {
+  slate: { tile: "bg-slate-800 text-white", value: "text-slate-900" },
+  emerald: { tile: "bg-emerald-600 text-white", value: "text-emerald-700" },
+  rose: { tile: "bg-rose-600 text-white", value: "text-rose-700" },
+  amber: { tile: "bg-amber-500 text-white", value: "text-amber-700" },
+}
+
+type Stat = {
+  label: string
+  value: number
+  hint: string
+  icon: typeof Boxes
+  tone: StatTone
+  alert?: boolean
+}
 
 function shiftMonth(cursor: string, delta: number) {
   const [year, month] = cursor.split("-").map(Number)
@@ -194,7 +257,7 @@ function countsAsOf(item: Equipment, transactions: Transaction[], maintenance: M
     .filter(
       (entry) =>
         entry.equipmentId === item.id &&
-        entry.status !== "scheduled" &&
+        entry.status !== "completed" &&
         entry.openedOn <= date &&
         (!entry.completedOn || entry.completedOn > date),
     )
@@ -309,12 +372,16 @@ export function DashboardPage() {
   // A picked day is answered with the logo alone; `nonce` lets a second pick
   // restart the same hold instead of landing on an older timer.
   const [hold, setHold] = React.useState<{ nonce: number; date: string } | null>(null)
+  // The list stops at six rows until it is expanded. A new day starts closed,
+  // so the panel always opens on the same short view it opened on yesterday.
+  const [allActivity, setAllActivity] = React.useState(false)
   React.useEffect(() => {
     if (!hold) return
     const timer = setTimeout(() => setHold(null), AS_OF_HOLD_MS)
     return () => clearTimeout(timer)
   }, [hold])
   const cutoff = asOf || storeToday()
+  useResetWhen(cutoff, () => setAllActivity(false))
 
   // Choosing a day replays the register as it stood then. The mark stands in
   // for that work so the change never reads as a silent flicker. Days after
@@ -353,6 +420,8 @@ export function DashboardPage() {
     (item) => Boolean(item.returnedOn) && item.returnedOn! <= cutoff && visibleIds.has(item.equipmentId),
   )
   const recent = activity.filter((item) => item.at.slice(0, 10) <= cutoff && (!item.equipmentId || visibleIds.has(item.equipmentId)))
+  // Six rows, or the whole log once the expand control is pressed.
+  const shownActivity = allActivity ? recent : recent.slice(0, RECENT_VISIBLE)
   const marked = new Set<string>()
   for (const item of transactions) {
     const asset = equipment.find((entry) => entry.id === item.equipmentId)
@@ -384,36 +453,51 @@ export function DashboardPage() {
     color: usageColor(index),
   }))
 
-  const stats = [
-    {
-      label: "Total equipment",
-      value: totals.total,
-      hint: `On the register ${labelDate(cutoff)}`,
-      icon: Package,
-    },
+  // These four read the pieces on the register: the total is every unit the
+  // store holds, the three states are the parts of it that are free, outside or
+  // in repair.
+  const states: Stat[] = [
     {
       label: "Available",
       value: totals.available,
       hint: "Ready to issue",
-      icon: ClipboardCheck,
+      icon: PackageCheck,
+      tone: "emerald",
     },
     {
       label: "Checked out",
       value: totals.issued,
       hint: `${overdue.length} past the expected date`,
       icon: ArrowUpRight,
-      tone: "rose" as const,
+      tone: "rose",
+      alert: overdue.length > 0,
     },
     {
       label: "Under maintenance",
       value: totals.maintenance,
       hint: "Off the hook for repair",
       icon: Wrench,
+      tone: "amber",
     },
   ]
+  const stats: Stat[] = [
+    {
+      label: "Total equipment",
+      value: totals.total,
+      hint: `On the register ${labelDate(cutoff)}`,
+      icon: Boxes,
+      tone: "slate",
+    },
+    ...states,
+  ]
 
+  // Where the window is both wide and tall enough for the two-column
+  // dashboard, the column is pinned to the screen: the cards and panels keep
+  // their places and the two long lists scroll inside themselves. Narrower or
+  // shorter windows keep the flowing column, because pinning there would leave
+  // the activity log a sliver.
   return (
-    <div className="flex min-h-[calc(100vh-6.5rem)] flex-col gap-3">
+    <div className="flex min-h-[calc(100vh-6.5rem)] flex-col gap-3 xl:[@media(min-height:820px)]:h-[calc(100vh-6.5rem)] xl:[@media(min-height:820px)]:min-h-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-[13px] font-normal text-slate-900">Store overview</h1>
@@ -445,27 +529,19 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {stats.map((stat) => {
           const Icon = stat.icon
+          const tone = statTones[stat.tone]
           return (
-            <div
-              key={stat.label}
-              className={cn(
-                "rounded-lg border p-4 shadow-2xs",
-                stat.tone === "rose"
-                  ? "border-rose-200 bg-rose-50"
-                  : "border-slate-200 bg-white",
-              )}
-            >
+            <div key={stat.label} className="rounded-lg border border-slate-200 bg-white p-3.5 shadow-2xs">
               <div className="flex items-center justify-between gap-2">
-                <p className={cn("text-[11px] font-normal", stat.tone === "rose" ? "text-rose-700" : "text-slate-500")}>{stat.label}</p>
-                <Icon className={cn("h-4 w-4 shrink-0", stat.tone === "rose" ? "text-rose-600" : "text-slate-400")} strokeWidth={1.75} />
+                <p className="text-[11px] font-normal text-slate-500">{stat.label}</p>
+                <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", tone.tile)}>
+                  <Icon className="h-4 w-4" strokeWidth={1.75} />
+                </span>
               </div>
-              <p className={cn(
-                "mt-2 text-[22px] leading-none font-normal tracking-tight tabular-nums",
-                stat.tone === "rose" ? "text-rose-700" : "text-slate-900",
-              )}>
+              <p className={cn("mt-1.5 text-[26px] leading-none font-normal tracking-tight tabular-nums", tone.value)}>
                 {stat.value}
               </p>
-              <p className={cn("mt-1 text-[11px]", stat.tone === "rose" ? "text-rose-600" : "text-slate-500")}>{stat.hint}</p>
+              <p className={cn("mt-1.5 text-[11px]", stat.alert ? "text-rose-600" : "text-slate-500")}>{stat.hint}</p>
             </div>
           )
         })}
@@ -551,7 +627,18 @@ export function DashboardPage() {
         </div>
 
         <Panel fill className="min-h-full xl:col-span-2" title="Recent store activity" count={recent.length} icon={<ClipboardCheck className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />}>
-          <ul className="flex min-h-0 flex-1 flex-col divide-y divide-slate-200 overflow-auto">
+          {/* The log is the only thing that scrolls. On a tall screen the panel
+              takes the height the dashboard has left, so opening the whole
+              history fills that space and the list travels inside it — the page
+              itself stays where it was. Shorter screens get a list about the
+              height of the six rows it replaces, so one press still reveals the
+              whole history without adding a page of height. */}
+          <ul
+            className={cn(
+              "flex min-h-0 flex-1 flex-col divide-y divide-slate-200 overflow-auto",
+              allActivity && "max-h-[46vh] xl:[@media(min-height:820px)]:max-h-none",
+            )}
+          >
             {recent.length === 0 ? (
               <li className="flex flex-1">
                 <EmptyState
@@ -562,7 +649,7 @@ export function DashboardPage() {
                 />
               </li>
             ) : (
-              recent.map((item, index) => (
+              shownActivity.map((item, index) => (
                 <li key={item.id} className="flex items-start gap-2 px-3 py-2.5">
                   <span
                     className={cn(
@@ -592,6 +679,27 @@ export function DashboardPage() {
               ))
             )}
           </ul>
+          {/* Everything past the sixth movement is kept behind this one press:
+              the panel stays short, and the whole log is still one click away. */}
+          {recent.length > RECENT_VISIBLE ? (
+            <div className="shrink-0 border-t border-slate-200 px-3 py-1.5">
+              <button
+                type="button"
+                onClick={() => setAllActivity((open) => !open)}
+                aria-expanded={allActivity}
+                className="flex w-full items-center justify-center gap-1 rounded-md py-0.5 text-[11px] font-normal text-slate-600 transition-colors hover:text-emerald-700"
+              >
+                {allActivity ? "Show fewer" : `Show all ${recent.length} activities`}
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform",
+                    allActivity && "rotate-180",
+                  )}
+                  strokeWidth={1.75}
+                />
+              </button>
+            </div>
+          ) : null}
         </Panel>
       </div>
 

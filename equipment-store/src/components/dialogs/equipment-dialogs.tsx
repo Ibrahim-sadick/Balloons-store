@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { sentenceCase } from "@/lib/format"
+import { cancelNavProgress, runLoadingLine } from "@/lib/nav-progress"
 import { countsFor } from "@/lib/stock"
 import { ConditionBadge } from "@/components/status-badge"
 import { storeToday, type Condition, type Equipment } from "@/lib/types"
@@ -344,6 +345,16 @@ export function EditEquipmentDialog({
   )
 }
 
+/**
+ * A week out from today, read fresh every time the dialog opens. A due date
+ * may sit in the future, but it may never sit behind the store's own day, so
+ * the default has to move with the calendar instead of being a fixed string.
+ */
+function dueInAWeek() {
+  const [year, month, day] = storeToday().split("-").map(Number)
+  return new Date(Date.UTC(year, month - 1, day + 7)).toISOString().slice(0, 10)
+}
+
 export function IssueEquipmentDialog({
   open,
   onOpenChange,
@@ -357,19 +368,21 @@ export function IssueEquipmentDialog({
   const available = equipment.filter((item) => countsFor(item, transactions).available > 0)
   const [selectedId, setSelectedId] = React.useState("")
   const [issuedTo, setIssuedTo] = React.useState("")
-  const [expectedReturn, setExpectedReturn] = React.useState("2026-11-26")
+  const [expectedReturn, setExpectedReturn] = React.useState(() => dueInAWeek())
   const [quantity, setQuantity] = React.useState("1")
   const [notes, setNotes] = React.useState("")
   const [error, setError] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
 
   useReset(open, () => {
     const preferred = available.find((item) => item.id === equipmentId) ?? available[0]
     setSelectedId(preferred?.id ?? "")
     setIssuedTo("")
-    setExpectedReturn("2026-11-26")
+    setExpectedReturn(dueInAWeek())
     setQuantity("1")
     setNotes("")
     setError(preferred ? "" : "Nothing on the hook is available to issue.")
+    setSaving(false)
   })
 
   const selected = available.find((item) => item.id === selectedId)
@@ -386,19 +399,33 @@ export function IssueEquipmentDialog({
           className="flex flex-col gap-3"
           onSubmit={async (event) => {
             event.preventDefault()
-            const result = await issueEquipment({
-              equipmentId: selectedId,
-              issuedTo,
-              expectedReturn,
-              conditionOut: selected?.condition ?? "Good",
-              notes,
-              quantity: Number(quantity),
-            })
-            if (!result.ok) {
-              setError(result.message)
-              return
+            // Two clicks must not issue two loads, so the button locks until the
+            // line has finished and the answer has landed.
+            if (saving) return
+            setSaving(true)
+            // The top line is this check-out's own progress: the dialog only
+            // steps aside once the bar is empty again.
+            const line = runLoadingLine()
+            try {
+              const result = await issueEquipment({
+                equipmentId: selectedId,
+                issuedTo,
+                expectedReturn,
+                conditionOut: selected?.condition ?? "Good",
+                notes,
+                quantity: Number(quantity),
+              })
+              if (!result.ok) {
+                // A refusal is not a receipt: drop the line and say why instead.
+                cancelNavProgress()
+                setError(result.message)
+                return
+              }
+              await line
+              onOpenChange(false)
+            } finally {
+              setSaving(false)
             }
-            onOpenChange(false)
           }}
         >
           <DialogHeader>
@@ -443,7 +470,7 @@ export function IssueEquipmentDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="issue-due">Expected return</Label>
-                <Input id="issue-due" type="date" value={expectedReturn} onChange={(event) => setExpectedReturn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
+                <Input id="issue-due" type="date" min={storeToday()} value={expectedReturn} onChange={(event) => setExpectedReturn(event.target.value)} className={`${fieldInputClass} font-mono tabular-nums`} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Condition out</Label>
@@ -459,12 +486,12 @@ export function IssueEquipmentDialog({
           </div>
           <FormError message={error} />
           <DialogFooter>
-            <Button type="button" variant="outline" className="rounded-md" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" className="rounded-md" disabled={saving} onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <EmeraldButton type="submit" disabled={!selectedId}>
+            <EmeraldButton type="submit" disabled={!selectedId || saving} aria-busy={saving}>
               <Tag className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              Issue item
+              {saving ? "Issuing..." : "Issue item"}
             </EmeraldButton>
           </DialogFooter>
         </form>
@@ -482,26 +509,14 @@ export function PrintTagDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  if (!equipment) return null
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Print QR tag</DialogTitle>
-          <DialogDescription>Stick this on the case. The tag number is the cage key.</DialogDescription>
+          <DialogDescription>Stick this on the case. Scanning the square opens the whole record for this item.</DialogDescription>
         </DialogHeader>
-        <div id="asset-tag" className="rounded-md border border-slate-900 bg-white p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-normal tracking-wide text-slate-500 uppercase">Balons Store</p>
-              <p className="mt-1 text-xs font-normal text-slate-900">{equipment.name}</p>
-              <p className="text-[11px] text-slate-500">{equipment.manufacturer} {equipment.model}</p>
-            </div>
-            <QrMark seed={equipment.assetTag} />
-          </div>
-          <p className="mt-4 font-mono text-lg tabular-nums tracking-tight text-slate-900">{equipment.assetTag}</p>
-          <p className="font-mono text-[11px] tabular-nums text-slate-500">{equipment.serialNumber}</p>
-        </div>
+        {equipment ? <AssetTagCard equipment={equipment} /> : null}
         <DialogFooter>
           <Button type="button" variant="outline" className="rounded-md" onClick={() => onOpenChange(false)}>
             Close
@@ -513,5 +528,41 @@ export function PrintTagDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * The label itself. The square carries the address of /equipment/<id> on the
+ * running app, read from the window after mount: the server has no origin, and
+ * a tag printed with "localhost" would open nothing on the phone that scans it.
+ * Whatever address the operator reached the app on — the machine's LAN address
+ * on the shop's Wi-Fi — is the address the phone will reach too.
+ */
+const subscribeToOrigin = () => () => {}
+const readOrigin = () => window.location.origin
+const readNoOrigin = () => ""
+
+function AssetTagCard({ equipment }: { equipment: Equipment }) {
+  // The address cannot change while the dialog is open, so there is nothing to
+  // subscribe to; the server simply has no origin to read.
+  const origin = React.useSyncExternalStore(subscribeToOrigin, readOrigin, readNoOrigin)
+  const recordPath = `/equipment/${equipment.id}`
+
+  return (
+    <div id="asset-tag" className="rounded-md border border-slate-900 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] font-normal tracking-wide text-slate-500 uppercase">Ballons Store</p>
+          <p className="mt-1 text-xs font-normal text-slate-900">{equipment.name}</p>
+          <p className="text-[11px] text-slate-500">{equipment.manufacturer} {equipment.model}</p>
+        </div>
+        <QrMark value={`${origin}${recordPath}`} />
+      </div>
+      <p className="mt-4 font-mono text-lg tabular-nums tracking-tight text-slate-900">{equipment.assetTag}</p>
+      <p className="font-mono text-[11px] tabular-nums text-slate-500">{equipment.serialNumber}</p>
+      <p className="mt-2 border-t border-dashed border-slate-300 pt-1.5 text-[10px] font-normal text-slate-500">
+        Scan the square for every detail recorded for this item.
+      </p>
+    </div>
   )
 }

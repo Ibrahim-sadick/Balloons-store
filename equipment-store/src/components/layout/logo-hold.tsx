@@ -4,6 +4,7 @@ import * as React from "react"
 import Image from "next/image"
 import { createPortal } from "react-dom"
 import logo from "@/shine baloons.png"
+import { useScrollLock } from "@/hooks/use-scroll-lock"
 
 /**
  * The wait shown when the dashboard is asked for an earlier day. Nothing but the
@@ -17,8 +18,14 @@ import logo from "@/shine baloons.png"
  *
  * Hung on <body> because the dashboard sits inside an overflow-hidden column;
  * a fixed overlay left in place there would be clipped.
+ *
+ * While the mark is up the page underneath is frozen: a calendar click that can
+ * still be scrolled away reads like the figures already changed. It is released
+ * the moment this component unmounts, at the end of the hold.
  */
 export function LogoHold({ label }: { label: string }) {
+  useScrollLock(true)
+
   if (typeof document === "undefined") return null
 
   return createPortal(

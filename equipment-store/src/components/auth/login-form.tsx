@@ -7,19 +7,35 @@ import { BrandMark } from "@/components/layout/sidebar"
 import { fieldInputClass, FormError, SlateButton, Spinner } from "@/components/controls"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { startNavProgress } from "@/lib/nav-progress"
 import { useStore } from "@/lib/store"
 
 /**
- * How long the signing-in state stays on screen at minimum. The API answers a
- * local sign-in in ~200 ms, which the eye reads as a flicker; this holds the
- * spinner for five seconds so the click visibly does something. It is a floor,
- * not an added delay: a slower answer keeps the spinner up for as long as it
- * needs and is never cut short. Five seconds matches the sign-out hold.
+ * How long a refused sign-in stays on screen before the answer is shown. The
+ * API answers in ~200 ms, which the eye reads as a flicker; this holds the
+ * spinner for five seconds so the click visibly did something. A successful
+ * sign-in is timed by the loading line at the top instead, which is the same
+ * wait the dashboard itself is held behind.
  */
 const MIN_BUSY_MS = 5000
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Where to hand over to once the store says yes. A scan of an asset tag arrives
+ * as /login?next=/equipment/<id>, and dropping a visitor on the dashboard after
+ * they asked for one machine would lose the whole point of the printed square.
+ * The address is read at the hand-off rather than through searchParams, so this
+ * page still needs nothing from the request and can be served from cache. Only
+ * a path on this store is honoured, and never back to this page, so a
+ * hand-edited link cannot bounce a visitor elsewhere.
+ */
+function afterSignIn() {
+  const next = new URLSearchParams(window.location.search).get("next")
+  if (next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login")) return next
+  return "/dashboard"
 }
 
 export function LoginForm() {
@@ -35,7 +51,7 @@ export function LoginForm() {
   React.useEffect(() => {
     // `!busy` keeps a successful sign-in from navigating away mid-spinner, which
     // would make the five-second hold invisible.
-    if (ready && session && !busy) router.replace("/dashboard")
+    if (ready && session && !busy) router.replace(afterSignIn())
   }, [ready, session, busy, router])
 
   return (
@@ -58,9 +74,9 @@ export function LoginForm() {
             setDenied(false)
             const startedAt = Date.now()
             const result = await signIn(email, password)
-            const remaining = MIN_BUSY_MS - (Date.now() - startedAt)
-            if (remaining > 0) await wait(remaining)
             if (!result.ok) {
+              const remaining = MIN_BUSY_MS - (Date.now() - startedAt)
+              if (remaining > 0) await wait(remaining)
               setBusy(false)
               // Only a rejected email/password pair is an access refusal; a server
               // that is down or a blocked attempt keeps its own wording.
@@ -68,15 +84,19 @@ export function LoginForm() {
               setError(result.denied ? "" : result.message)
               return
             }
-            // The card is cleared before the hand-off. Next keeps this page
-            // mounted behind the dashboard, so a leftover "Signing in", an old
-            // denial notice or a typed password would all be on screen the next
+            // The card stays on "Signing in" while the line crosses the bar; the
+            // effect above only hands over to the dashboard once busy falls, so
+            // the wait is one animation and not a spinner racing a route swap.
+            // The card is cleared here, not after the hand-off: Next keeps this
+            // page mounted behind the dashboard, so a leftover "Signing in", an
+            // old denial notice or a typed password would be on screen the next
             // time /login is shown.
-            setBusy(false)
-            setDenied(false)
-            setError("")
-            setPassword("")
-            router.push("/dashboard")
+            startNavProgress(() => {
+              setBusy(false)
+              setDenied(false)
+              setError("")
+              setPassword("")
+            })
           }}
         >
           <div className="flex flex-col gap-1.5">
@@ -84,7 +104,14 @@ export function LoginForm() {
             <Input
               id="email"
               type="email"
+              name="email"
+              // Phone keyboards otherwise capitalise the first letter and
+              // "correct" the address, which the server then rightly refuses.
+              inputMode="email"
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               className={fieldInputClass}

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/sheet"
 import { AppHeader, EquipmentSearchProvider } from "@/components/layout/header"
 import { SidebarBody } from "@/components/layout/sidebar"
+import { startNavProgress } from "@/lib/nav-progress"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { useResetWhen } from "@/hooks/use-reset-when"
@@ -22,11 +23,39 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = React.useState(true)
 
   React.useEffect(() => {
-    if (ready && !session) router.replace("/login")
-  }, [ready, session, router])
+    // A tag on a shelf is scanned by someone who is not signed in yet, so the
+    // address the code carried has to survive the sign-in. /login reads `next`
+    // back and hands over to it instead of the dashboard.
+    if (ready && !session) router.replace(`/login?next=${encodeURIComponent(pathname)}`)
+  }, [ready, session, pathname, router])
 
   // A route change means the mobile drawer has done its job.
   useResetWhen(pathname, () => setNavOpen(false))
+
+  // Every internal link asks for the line first, and the router is only called
+  // once it has crossed: sidebar items, breadcrumbs, table rows, report links.
+  // Capture runs ahead of Link's own handler and marks the click handled, which
+  // is exactly what stops Link from navigating now; the link's own onClick
+  // (closing the phone drawer) still runs.
+  React.useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const anchor = (event.target as Element | null)?.closest?.("a[href]")
+      if (!anchor) return
+      if (anchor.getAttribute("target") === "_blank" || anchor.hasAttribute("download")) return
+      const next = new URL(anchor.getAttribute("href") ?? "", window.location.href)
+      if (next.origin !== window.location.origin) return
+      // A new query on the section already open is a filter, not a page change:
+      // holding the filter back seven seconds would be nonsense.
+      if (next.pathname === window.location.pathname) return
+      event.preventDefault()
+      setNavOpen(false)
+      const href = `${next.pathname}${next.search}${next.hash}`
+      startNavProgress(() => router.push(href))
+    }
+    document.addEventListener("click", onClick, true)
+    return () => document.removeEventListener("click", onClick, true)
+  }, [router])
 
   return (
     <div className="min-h-screen bg-slate-50">

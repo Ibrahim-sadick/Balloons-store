@@ -2,14 +2,23 @@ import { storeToday } from "@/lib/types"
 
 export type EquipmentReceipt = {
   name: string
+  /** The tag on the label, printed above the item so a scan can be matched to paper. */
+  assetTag?: string
+  serial?: string
   category: string
   location: string
+  manufacturer?: string
+  model?: string
   condition: string
+  state?: string
+  acquiredOn?: string
+  expectedReturn?: string
   total: number
   available: number
   issued: number
   returned: number
   maintenance: number
+  openRepairs?: number
   notes: string
 }
 
@@ -67,15 +76,23 @@ export function equipmentReceiptHtml(receipt: EquipmentReceipt) {
   <p class="muted">${escapeHtml(storeToday())}</p>
   <hr class="rule" />
   <p class="item">${escapeHtml(receipt.name)}</p>
+  ${receipt.assetTag ? line("Asset tag", receipt.assetTag) : ""}
   ${line("Category", receipt.category || "—")}
   ${line("Location", receipt.location || "—")}
+  ${receipt.serial ? line("Serial", receipt.serial) : ""}
+  ${receipt.manufacturer ? line("Maker", receipt.manufacturer) : ""}
+  ${receipt.model ? line("Model", receipt.model) : ""}
   ${line("Condition", receipt.condition)}
+  ${receipt.state ? line("State", receipt.state) : ""}
+  ${receipt.acquiredOn ? line("Acquired", receipt.acquiredOn) : ""}
+  ${receipt.expectedReturn ? line("Due back", receipt.expectedReturn) : ""}
   <hr class="rule" />
   ${line("Number", String(receipt.total))}
   ${line("Available", String(receipt.available))}
   ${line("Issued", String(receipt.issued))}
   ${line("Returned", String(receipt.returned))}
   ${line("Maintenance", String(receipt.maintenance))}
+  ${receipt.openRepairs ? line("Open repairs", String(receipt.openRepairs)) : ""}
   <hr class="rule" />
   <p class="label">Notes</p>
   <p class="notes">${escapeHtml(notes || "—")}</p>

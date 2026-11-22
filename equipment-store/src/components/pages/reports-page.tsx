@@ -158,7 +158,7 @@ export function ReportsPage() {
 
   const exportSection = (title: string, section: string, headers: string[], rows: ExcelCell[][]) => {
     const range = from || to ? `-${from || "start"}-${to || "today"}` : ""
-    downloadXlsx(`balons-${section}-${storeToday()}${range}.xlsx`, title, headers, rows, { title, summary: balance })
+    downloadXlsx(`ballons-${section}-${storeToday()}${range}.xlsx`, title, headers, rows, { title, summary: balance })
   }
 
   const exportAvailable = () =>
@@ -533,13 +533,11 @@ function ExportButton({ onClick }: { onClick: () => void }) {
   return (
     <Button
       type="button"
-      size="xs"
-      variant="outline"
-      className="h-6 gap-1 rounded-md border-slate-200 px-2 text-[10px] leading-none text-slate-700"
+      className="h-8 gap-1.5 rounded-md bg-emerald-600 px-3 text-[11px] leading-none font-normal whitespace-nowrap text-white shadow-2xs hover:bg-emerald-700 focus-visible:border-emerald-700 focus-visible:ring-emerald-600/30"
       onClick={onClick}
     >
-      <Download className="h-3 w-3 shrink-0" strokeWidth={1.75} />
-      Excel
+      <Download className="size-3.5 shrink-0" strokeWidth={1.75} />
+      Export Excel
     </Button>
   )
 }

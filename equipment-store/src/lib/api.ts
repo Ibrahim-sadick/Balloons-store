@@ -11,7 +11,7 @@ const API_PORT = 4000
  * from a phone, "localhost" means the phone itself, so a baked-in
  * http://localhost:4000 refuses every call even when the desk PC is running.
  */
-function resolveBaseUrl(): string {
+export function apiBaseUrl(): string {
   const configured = process.env.NEXT_PUBLIC_API_URL?.trim()
   if (configured) return configured.replace(/\/$/, "")
   if (typeof window !== "undefined" && window.location.hostname) {
@@ -40,7 +40,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   let response: Response
 
   try {
-    response = await fetch(`${resolveBaseUrl()}${path}`, {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
       method: options.method ?? "GET",
       headers: {
         "content-type": "application/json",

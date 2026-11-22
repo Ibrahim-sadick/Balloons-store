@@ -3,7 +3,9 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { ChevronRight, Menu, Search } from "lucide-react"
+import { ChevronRight, LogOut, Menu, Search } from "lucide-react"
+import { startNavProgress } from "@/lib/nav-progress"
+import { startSignOut } from "@/lib/sign-out-veil"
 import { useStore } from "@/lib/store"
 
 const EquipmentSearchContext = React.createContext<{
@@ -31,11 +33,13 @@ export function AppHeader({
 }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { equipment, categories } = useStore()
+  const { equipment, categories, signOut } = useStore()
   const { query, setQuery } = useEquipmentSearch()
   const [open, setOpen] = React.useState(false)
+  const [signOutOpen, setSignOutOpen] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const wrapRef = React.useRef<HTMLDivElement>(null)
+  const logoutRef = React.useRef<HTMLDivElement>(null)
   const needle = query.trim().toLowerCase()
   const matches = needle
     ? equipment.filter((item) => {
@@ -65,9 +69,49 @@ export function AppHeader({
     return () => document.removeEventListener("mousedown", close)
   }, [open])
 
+  // The switch is disarmed by a press anywhere else in the header, so the
+  // question never sits open behind another action.
+  React.useEffect(() => {
+    if (!signOutOpen) return
+    const close = (event: MouseEvent) => {
+      if (!logoutRef.current?.contains(event.target as Node)) setSignOutOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSignOutOpen(false)
+    }
+    document.addEventListener("mousedown", close)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", close)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [signOutOpen])
+
+  // The only way out of the app. The veil and the line are one wait: the logo
+  // covers the screen while the line crosses the bar, and the session is only
+  // dropped — and /login only shown — when both have finished.
+  const leave = () => {
+    setSignOutOpen(false)
+    startSignOut()
+    startNavProgress(() => {
+      signOut()
+      router.replace("/login")
+    })
+  }
+
+  // Searching while the register is already open only filters it, so that jump
+  // is immediate; the line is for a change of section.
+  const jumpToRegister = (href: string) => {
+    if (pathname === "/equipment") {
+      router.push(href)
+      return
+    }
+    startNavProgress(() => router.push(href))
+  }
+
   const openInRegister = (assetTag: string) => {
     setOpen(false)
-    router.push(`/equipment?q=${encodeURIComponent(assetTag)}`)
+    jumpToRegister(`/equipment?q=${encodeURIComponent(assetTag)}`)
   }
 
   const labels: Record<string, string> = {
@@ -78,9 +122,18 @@ export function AppHeader({
     "/reports": "Reports",
     "/settings": "Settings",
   }
-  const crumbs: { href: string; label: string }[] = [
-    { href: pathname, label: labels[pathname] ?? "Store" },
-  ]
+  // A nested route keeps its section in the trail, and the register answers for
+  // the last step: a scanned tag reads "Store › Equipment › Helment" rather
+  // than falling back to "Store › Store".
+  const section = Object.keys(labels).find((href) => pathname === href || pathname.startsWith(`${href}/`))
+  const nested = section && pathname !== section ? pathname.slice(section.length + 1) : ""
+  const crumbs: { href: string; label: string }[] =
+    section && nested
+      ? [
+          { href: section, label: labels[section] },
+          { href: pathname, label: equipment.find((item) => item.id === nested)?.name ?? "Record" },
+        ]
+      : [{ href: pathname, label: section ? labels[section] : "Store" }]
 
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-3 lg:px-4">
@@ -133,7 +186,7 @@ export function AppHeader({
               return
             }
             setOpen(false)
-            router.push(needle ? `/equipment?q=${encodeURIComponent(query.trim())}` : "/equipment")
+            jumpToRegister(needle ? `/equipment?q=${encodeURIComponent(query.trim())}` : "/equipment")
           }}
           className="h-8 w-full rounded-md border border-slate-200 bg-slate-50 pr-14 pl-8 text-[12px] font-normal text-slate-900 shadow-2xs outline-none placeholder:text-slate-500"
         />
@@ -160,6 +213,50 @@ export function AppHeader({
                 ))}
               </ul>
             )}
+          </div>
+        ) : null}
+      </div>
+      {/* Top right corner: one logout icon that toggles the question below it.
+          It is not a switch that stays on — the icon looks the same open or
+          closed, and the card sliding out is the only thing that changes. */}
+      <div ref={logoutRef} className="relative shrink-0">
+        <button
+          type="button"
+          aria-label="Log out"
+          aria-expanded={signOutOpen}
+          aria-controls="logout-question"
+          title="Log out"
+          onClick={() => setSignOutOpen((value) => !value)}
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors duration-200 outline-none hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-emerald-600/30 active:bg-slate-200"
+        >
+          <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+        </button>
+        {signOutOpen ? (
+          <div
+            id="logout-question"
+            className="logout-sheet absolute top-full right-0 z-40 mt-2 w-[216px] rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
+          >
+            <p className="text-[11px] font-normal text-slate-900">Log out of Ballons Store?</p>
+            <p className="mt-0.5 text-[10.5px] font-normal text-slate-500">
+              You will need your email and password to come back in.
+            </p>
+            <div className="mt-2.5 flex items-center gap-2">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setSignOutOpen(false)}
+                className="h-7 flex-1 rounded-md border border-slate-200 text-[11px] font-normal text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={leave}
+                className="h-7 flex-1 rounded-md border border-rose-600 bg-rose-600 text-[11px] font-normal text-white transition-colors hover:bg-rose-700"
+              >
+                Log out
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

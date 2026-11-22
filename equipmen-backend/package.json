@@ -2,7 +2,7 @@
   "name": "equipmen-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Balons Store equipment & asset register API (MySQL + Prisma + Express)",
+  "description": "Ballons Store equipment & asset register API (MySQL + Prisma + Express)",
   "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",

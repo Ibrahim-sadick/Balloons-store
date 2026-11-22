@@ -50,9 +50,13 @@ export async function outstandingQty(db: Db, equipmentId: string): Promise<numbe
   return Number(rows[0]?.qty ?? 0)
 }
 
+/**
+ * Units held by maintenance that has not finished. A booked or in-progress job
+ * takes its units out of the available count; only a completed job frees them.
+ */
 export async function maintenanceQty(db: Db, equipmentId: string): Promise<number> {
   const result = await db.maintenanceLog.aggregate({
-    where: { equipmentId, status: "in_progress" },
+    where: { equipmentId, status: { not: "completed" } },
     _sum: { quantity: true },
   })
   return result._sum.quantity ?? 0
@@ -103,7 +107,7 @@ export async function stockByEquipment(
     LEFT JOIN (
       SELECT equipment_id AS id, SUM(quantity) AS qty
       FROM maintenance_logs
-      WHERE status = 'in_progress'
+      WHERE status <> 'completed'
       GROUP BY equipment_id
     ) m ON m.id = e.id
   `

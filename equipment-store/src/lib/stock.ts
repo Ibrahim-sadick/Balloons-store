@@ -9,9 +9,14 @@ export type ItemCount = {
   maintenance: number
 }
 
+/**
+ * Units off the hook because of maintenance. A job that is booked or under way
+ * holds its units out of the shop — only a completed job puts them back, which
+ * is why a logged repair lowers the available figure straight away.
+ */
 export function openMaintenanceQty(equipmentId: string, logs: MaintenanceLog[]) {
   return logs
-    .filter((log) => log.equipmentId === equipmentId && log.status === "in_progress")
+    .filter((log) => log.equipmentId === equipmentId && log.status !== "completed")
     .reduce((sum, log) => sum + (log.quantity ?? 1), 0)
 }
 

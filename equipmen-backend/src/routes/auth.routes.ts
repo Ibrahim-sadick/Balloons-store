@@ -26,21 +26,37 @@ const COOKIE_OPTIONS = {
   path: "/",
 }
 
+/**
+ * What the sign-in limiter hands the route: it cannot know the answer itself.
+ * `charge` spends one of the refused-password slots and `clear` wipes what an
+ * earlier run of attempts had spent, so a correct email and password is free.
+ */
+type LoginLimits = {
+  chargeRefusal?: () => void
+  clearRefusals?: () => void
+}
+
 authRouter.post(
   "/login",
   loginLimiter,
   asyncHandler(async (req, res) => {
     const { email, password } = parseBody(loginSchema, req.body)
     const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } })
+    const limits = res.locals as LoginLimits
 
     if (!user) {
       await bcrypt.compare(password, DUMMY_HASH)
+      limits.chargeRefusal?.()
       throw unauthorized(INVALID_CREDENTIALS)
     }
 
     const matches = await bcrypt.compare(password, user.passwordHash)
-    if (!matches) throw unauthorized(INVALID_CREDENTIALS)
+    if (!matches) {
+      limits.chargeRefusal?.()
+      throw unauthorized(INVALID_CREDENTIALS)
+    }
 
+    limits.clearRefusals?.()
     const dto = toUserDto(user)
     const token = signToken(dto)
     res.cookie(SESSION_COOKIE, token, { ...COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 * 1000 })

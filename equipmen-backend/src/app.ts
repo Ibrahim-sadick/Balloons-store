@@ -49,7 +49,12 @@ export function createApp() {
     } catch {
       database = "unreachable"
     }
-    res.json({ ok: true, service: "equipmen-backend", database, time: new Date().toISOString() })
+    res.json({
+      ok: true,
+      service: "equipmen-backend",
+      database,
+      time: new Date().toISOString(),
+    })
   })
 
   app.use("/api/auth", authRouter)

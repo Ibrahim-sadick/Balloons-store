@@ -7,7 +7,6 @@ import {
   fieldInputClass,
   FilterSelect,
   FormError,
-  Spinner,
 } from "@/components/controls"
 import { Button } from "@/components/ui/button"
 import {
@@ -23,6 +22,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { ConditionBadge } from "@/components/status-badge"
 import { storeToday, type Condition, type Transaction } from "@/lib/types"
+import { cancelNavProgress, runLoadingLine } from "@/lib/nav-progress"
 import { useStore } from "@/lib/store"
 import { useResetWhen } from "@/hooks/use-reset-when"
 
@@ -82,6 +82,9 @@ export function ReturnItemDialog({
               return
             }
             setSaving(true)
+            // The top line is this save's own progress: it runs while the ledger
+            // is written and only lets the dialog go once the bar is empty again.
+            const line = runLoadingLine()
             try {
               const result = await returnEquipment({
                 transactionId: selected.id,
@@ -92,9 +95,12 @@ export function ReturnItemDialog({
                 quantity: comingBack,
               })
               if (!result.ok) {
+                // A refusal is not a receipt: drop the line and say why instead.
+                cancelNavProgress()
                 setError(result.message)
                 return
               }
+              await line
               onReturned?.()
               onOpenChange(false)
             } finally {
@@ -206,12 +212,8 @@ export function ReturnItemDialog({
               Cancel
             </Button>
             <EmeraldButton type="submit" disabled={!selected || saving} aria-busy={saving}>
-              {saving ? (
-                <Spinner className="h-4 w-4" />
-              ) : (
-                <PackageCheck className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              )}
-              {saving ? "Saving..." : "Return equipment"}
+              <PackageCheck className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              {saving ? "Returning..." : "Return equipment"}
             </EmeraldButton>
           </DialogFooter>
         </form>

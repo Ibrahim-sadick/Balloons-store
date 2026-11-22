@@ -29,6 +29,7 @@ import {
   type MaintenanceType,
 } from "@/lib/types"
 import { sentenceCase } from "@/lib/format"
+import { cancelNavProgress, runLoadingLine } from "@/lib/nav-progress"
 import { countsFor } from "@/lib/stock"
 import { useStore } from "@/lib/store"
 import { useResetWhen } from "@/hooks/use-reset-when"
@@ -94,6 +95,9 @@ export function LogMaintenanceDialog({
               return
             }
             setSaving(true)
+            // The top line is this log's own progress: the dialog only steps
+            // aside once the bar is empty again.
+            const line = runLoadingLine()
             try {
               const result = await logMaintenance({
                 equipmentId: selectedId,
@@ -105,9 +109,12 @@ export function LogMaintenanceDialog({
                 quantity: going,
               })
               if (!result.ok) {
+                // A refusal is not a receipt: drop the line and say why instead.
+                cancelNavProgress()
                 setError(result.message)
                 return
               }
+              await line
               onOpenChange(false)
             } finally {
               setSaving(false)
@@ -117,7 +124,7 @@ export function LogMaintenanceDialog({
           <DialogHeader>
             <DialogTitle>Log maintenance</DialogTitle>
             <DialogDescription>
-              Set how many this log covers. In-progress work pulls that many off the hook.
+              Set how many this log covers. Any job that is not completed holds those units off the hook.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -144,15 +151,15 @@ export function LogMaintenanceDialog({
                 type="number"
                 min={1}
                 step={1}
-                max={status === "in_progress" ? Math.max(available, 1) : undefined}
+                max={status === "completed" ? undefined : Math.max(available, 1)}
                 value={quantity}
                 onChange={(event) => setQuantity(event.target.value)}
                 className={`${fieldInputClass} font-mono tabular-nums`}
               />
               <p className="text-[10px] font-normal text-slate-500">
-                {status === "in_progress"
-                  ? `${available} available. ${staying} stay available.`
-                  : "This number is recorded. The items stay available until the work is in progress."}
+                {status === "completed"
+                  ? "This number is recorded as work that is already finished, so the units never leave the hook."
+                  : `${available} available. ${staying} stay available.`}
               </p>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -187,12 +194,8 @@ export function LogMaintenanceDialog({
               Cancel
             </Button>
             <EmeraldButton type="submit" disabled={!selectedId || saving} aria-busy={saving}>
-              {saving ? (
-                <Spinner className="h-4 w-4" />
-              ) : (
-                <Plus className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              )}
-              {saving ? "Saving..." : "Save log"}
+              <Plus className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              {saving ? "Logging..." : "Save log"}
             </EmeraldButton>
           </DialogFooter>
         </form>

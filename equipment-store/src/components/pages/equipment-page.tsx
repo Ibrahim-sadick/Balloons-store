@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/table"
 import { downloadCsv, equipmentRowsFromCsv } from "@/lib/csv"
 import { equipmentReceiptHtml, printThermalReceipt } from "@/lib/receipt"
-import { countsFor } from "@/lib/stock"
+import { countsFor, statusFor } from "@/lib/stock"
 import { useEquipmentSearch } from "@/components/layout/header"
 import { useStore } from "@/lib/store"
 import { useSyncedState } from "@/hooks/use-synced-state"
@@ -230,6 +230,7 @@ export function EquipmentPage() {
                 const category = categories.find((entry) => entry.id === item.categoryId)
                 const location = locations.find((entry) => entry.id === item.locationId)
                 const counts = countsFor(item, transactions, maintenance)
+                const itemStatus = statusFor(counts)
                 return (
                   <TableRow key={item.id} className="border-slate-200 hover:bg-slate-50">
                     <TableCell className="px-3 py-2.5">
@@ -270,9 +271,21 @@ export function EquipmentPage() {
                             printThermalReceipt(
                               equipmentReceiptHtml({
                                 name: item.name,
+                                assetTag: item.assetTag,
+                                serial: item.serialNumber,
                                 category: category?.name ?? "",
                                 location: location?.name ?? "",
+                                manufacturer: item.manufacturer,
+                                model: item.model,
                                 condition: item.condition,
+                                state:
+                                  itemStatus === "available"
+                                    ? "Available"
+                                    : itemStatus === "checked_out"
+                                      ? "Checked out"
+                                      : "In maintenance",
+                                acquiredOn: item.acquiredOn,
+                                expectedReturn: item.expectedReturn ?? "",
                                 total: counts.total,
                                 available: counts.available,
                                 issued: counts.issued,

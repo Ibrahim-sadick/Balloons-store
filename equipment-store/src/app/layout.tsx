@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { DM_Sans, Geist_Mono } from "next/font/google"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { NavProgress } from "@/components/layout/nav-progress"
 import { SignOutVeil } from "@/components/layout/sign-out-overlay"
 import { StoreProvider } from "@/lib/store"
 import "./globals.css"
@@ -19,11 +20,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Balons Store",
-    template: "%s · Balons Store",
+    default: "Ballons Store",
+    template: "%s · Ballons Store",
   },
   description:
-    "Equipment and asset storage for the Balons cage. Track what is on the hook, who has it, and when it is due back.",
+    "Equipment and asset storage for Ballons Store. Track what is on the hook, who has it, and when it is due back.",
 }
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -36,8 +37,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <TooltipProvider delay={300}>
           <StoreProvider>{children}</StoreProvider>
         </TooltipProvider>
-        {/* Outside the route tree on purpose: signing out changes the page, and
-            the veil has to keep the screen past that change. */}
+        {/* Outside the route tree on purpose: the line has to keep drawing while
+            the screen under it changes, and the veil has to hold past that change. */}
+        <NavProgress />
         <SignOutVeil />
       </body>
     </html>

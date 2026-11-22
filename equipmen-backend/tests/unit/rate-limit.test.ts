@@ -8,6 +8,7 @@ import { rateLimit } from "../../src/rate-limit"
  */
 function call(handler: RequestHandler, ip = "10.0.0.1") {
   const res = {
+    locals: {} as Record<string, () => void>,
     setHeader: vi.fn(),
     status: vi.fn(),
     json: vi.fn(),
@@ -21,7 +22,13 @@ function call(handler: RequestHandler, ip = "10.0.0.1") {
 
   handler({ ip, socket: { remoteAddress: ip } } as unknown as Request, res as unknown as Response, next)
 
-  return { passed, setHeader: res.setHeader, status: res.status, json: res.json }
+  return {
+    passed,
+    locals: res.locals,
+    setHeader: res.setHeader,
+    status: res.status,
+    json: res.json,
+  }
 }
 
 const limiter = () =>
@@ -72,5 +79,35 @@ describe("rateLimit", () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe("rateLimit counting refusals", () => {
+  const refusalLimiter = () =>
+    rateLimit({ windowMs: 60_000, max: 2, message: "Slow down.", count: "refusals" })
+
+  it("does not charge a sign-in that is never refused", () => {
+    const handler = refusalLimiter()
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      expect(call(handler).passed).toBe(true)
+    }
+  })
+
+  it("blocks only after the allowed refusals are used up", () => {
+    const handler = refusalLimiter()
+    call(handler).locals.chargeRefusal?.()
+    call(handler).locals.chargeRefusal?.()
+    expect(call(handler).passed).toBe(false)
+  })
+
+  it("empties what earlier refusals spent once a password is right", () => {
+    const handler = refusalLimiter()
+    call(handler).locals.chargeRefusal?.()
+    // One refusal is already spent; a correct sign-in wipes it before the
+    // window can close, so the next two slots are both available again.
+    call(handler).locals.clearRefusals?.()
+    call(handler).locals.chargeRefusal?.()
+    call(handler).locals.chargeRefusal?.()
+    expect(call(handler).passed).toBe(false)
   })
 })

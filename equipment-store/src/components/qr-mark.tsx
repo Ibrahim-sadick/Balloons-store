@@ -1,37 +1,25 @@
 "use client"
 
-import * as React from "react"
+import { QRCodeSVG } from "qrcode.react"
 
-export function QrMark({ seed }: { seed: string }) {
-  const cells = React.useMemo(() => {
-    let hash = 0
-    for (const char of seed) hash = (hash * 33 + char.charCodeAt(0)) >>> 0
-    const size = 13
-    const grid: boolean[] = []
-    for (let index = 0; index < size * size; index += 1) {
-      hash = (hash * 1664525 + 1013904223) >>> 0
-      const x = index % size
-      const y = Math.floor(index / size)
-      const inFinder =
-        (x < 4 && y < 4) || (x > size - 5 && y < 4) || (x < 4 && y > size - 5)
-      const frame = x === 0 || y === 0 || x === 3 || y === 3
-      grid.push(inFinder ? frame || (x + y) % 2 === 0 : hash % 3 !== 0)
-    }
-    return grid
-  }, [seed])
-
+/**
+ * The square on the tag. It is a real QR code — byte mode, error correction M,
+ * four quiet modules — carrying the address of this equipment's record, so a
+ * phone camera opens the item instead of reading a number the operator then has
+ * to type. Drawn as SVG rather than dots so it stays sharp when the tag is
+ * printed and so scanners get clean module edges.
+ */
+export function QrMark({ value, size = 104 }: { value: string; size?: number }) {
   return (
-    <div
-      className="grid gap-px bg-white p-0.5"
-      style={{ gridTemplateColumns: "repeat(13, 6px)" }}
-      aria-hidden
-    >
-      {cells.map((filled, index) => (
-        <span
-          key={index}
-          className={filled ? "h-1.5 w-1.5 bg-slate-900" : "h-1.5 w-1.5 bg-white"}
-        />
-      ))}
-    </div>
+    <QRCodeSVG
+      value={value}
+      size={size}
+      level="M"
+      marginSize={4}
+      bgColor="#ffffff"
+      fgColor="#0f172a"
+      title={`Scan to open the record for ${value}`}
+      className="block h-auto w-full max-w-[104px] shrink-0"
+    />
   )
 }
